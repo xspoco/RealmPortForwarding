@@ -204,7 +204,7 @@ stop_service() {
     if ! systemctl is-active --quiet realm; then
         echo "realm服务当前未运行。"
         return
-    }
+    fi
     systemctl stop realm
     echo "realm服务已停止。"
 }
