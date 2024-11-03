@@ -68,6 +68,7 @@ WantedBy=multi-user.target" > /etc/systemd/system/realm.service
     realm_status="已安装"
     realm_status_color="\033[0;32m" # 绿色
     echo "部署完成。"
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 卸载realm
@@ -81,6 +82,7 @@ uninstall_realm() {
     # 更新realm状态变量
     realm_status="未安装"
     realm_status_color="\033[0;31m" # 红色
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 删除转发规则的函数
@@ -90,8 +92,9 @@ delete_forward() {
     local lines=($(grep -n 'remote =' /root/realm/config.toml)) # 搜索所有包含转发规则的行
     if [ ${#lines[@]} -eq 0 ]; then
         echo "没有发现任何转发规则。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
-    fi
+    }
     local index=1
     for line in "${lines[@]}"; do
         echo "${index}. $(echo $line | cut -d '"' -f 2)" # 提取并显示端口信息
@@ -102,16 +105,19 @@ delete_forward() {
     read -p "选择: " choice
     if [ -z "$choice" ]; then
         echo "返回主菜单。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
     if ! [[ $choice =~ ^[0-9]+$ ]]; then
         echo "无效输入，请输入数字。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
     if [ $choice -lt 1 ] || [ $choice -gt ${#lines[@]} ]; then
         echo "选择超出范围，请输入有效序号。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
@@ -124,6 +130,7 @@ delete_forward() {
     sed -i "${start_line},${end_line}d" /root/realm/config.toml
 
     echo "转发规则已删除。"
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 添加转发规则
@@ -154,6 +161,8 @@ remote = \"$ip:$port\"
         if [[ $answer != "Y" && $answer != "y" ]]; then
             # 删除最后一个多余的 [[endpoints]]
             sed -i '$ d' /root/realm/config.toml
+            echo "转发规则添加完成。"
+            read -n 1 -s -r -p "按任意键继续..."
             break
         fi
     done
@@ -203,10 +212,12 @@ start_service() {
 stop_service() {
     if ! systemctl is-active --quiet realm; then
         echo "realm服务当前未运行。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
     systemctl stop realm
     echo "realm服务已停止。"
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 主循环
