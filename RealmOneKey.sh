@@ -149,8 +149,8 @@ use_udp = true
     fi
 
     while true; do
-        read -p "请输入IP: " ip
-        read -p "请输入端口: " port
+        read -p "请输入目的地IP: " ip
+        read -p "请输入目的地端口: " port
         # 追加到config.toml文件
         echo "listen = \"0.0.0.0:$port\"
 remote = \"$ip:$port\"
