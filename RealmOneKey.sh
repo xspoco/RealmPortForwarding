@@ -172,6 +172,7 @@ remote = \"$ip:$port\"
 show_forwards() {
     if [ ! -f "/root/realm/config.toml" ]; then
         echo "配置文件不存在，尚未添加任何转发规则。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
@@ -183,6 +184,7 @@ show_forwards() {
     
     if [ ${#lines[@]} -eq 0 ]; then
         echo "没有发现任何转发规则。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
@@ -193,12 +195,14 @@ show_forwards() {
         let index+=1
     done
     echo "=================="
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 启动服务
 start_service() {
     if systemctl is-active --quiet realm; then
         echo "realm服务已经在运行中。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
     sudo systemctl unmask realm.service
@@ -206,6 +210,7 @@ start_service() {
     sudo systemctl restart realm.service
     sudo systemctl enable realm.service
     echo "realm服务已启动并设置为开机自启。"
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 停止服务
