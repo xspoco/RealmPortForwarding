@@ -164,7 +164,7 @@ add_forward() {
         echo "请先安装 realm（选项1）再添加转发规则。"
         read -n 1 -s -r -p "按任意键继续..."
         return
-    }
+    fi
 
     # 检查配置文件是否存在，如果不存在则创建基础配置
     if [ ! -f "/root/realm/config.toml" ]; then
