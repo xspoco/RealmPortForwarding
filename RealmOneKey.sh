@@ -232,6 +232,28 @@ show_forwards() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
+# 检查并处理权限的函数
+check_permission() {
+    local cmd=$1
+    if [ "$EUID" -eq 0 ]; then
+        # root用户直接执行
+        $cmd
+    else
+        # 非root用户，检查是否有sudo
+        if command -v sudo >/dev/null 2>&1; then
+            sudo $cmd
+        else
+            echo "错误：当前用户不是root用户，且未安装sudo。"
+            echo "请选择以下方式之一："
+            echo "1. 使用root用户运行此脚本"
+            echo "2. 安装sudo：apt-get install sudo 或 yum install sudo"
+            read -n 1 -s -r -p "按任意键继续..."
+            return 1
+        fi
+    fi
+    return 0
+}
+
 # 启动服务
 start_service() {
     if systemctl is-active --quiet realm; then
@@ -239,10 +261,21 @@ start_service() {
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
-    sudo systemctl unmask realm.service
-    sudo systemctl daemon-reload
-    sudo systemctl restart realm.service
-    sudo systemctl enable realm.service
+
+    # 使用check_permission函数执行命令
+    if ! check_permission "systemctl unmask realm.service"; then
+        return
+    fi
+    if ! check_permission "systemctl daemon-reload"; then
+        return
+    fi
+    if ! check_permission "systemctl restart realm.service"; then
+        return
+    fi
+    if ! check_permission "systemctl enable realm.service"; then
+        return
+    fi
+
     echo "realm服务已启动并设置为开机自启。"
     read -n 1 -s -r -p "按任意键继续..."
 }
