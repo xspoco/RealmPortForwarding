@@ -27,10 +27,12 @@ show_menu() {
     echo "================="
     echo "1. 部署环境"
     echo "2. 添加转发"
-    echo "3. 删除转发"
-    echo "4. 启动服务"
-    echo "5. 停止服务"
-    echo "6. 一键卸载"
+    echo "3. 查看已添加的转发规则"
+    echo "4. 删除转发"
+    echo "5. 启动服务"
+    echo "6. 停止服务"
+    echo "7. 一键卸载"
+    echo "0. 退出脚本"
     echo "================="
     echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
     echo -n "realm 转发状态："
@@ -116,11 +118,9 @@ delete_forward() {
     local chosen_line=${lines[$((choice-1))]} # 根据用户选择获取相应行
     local line_number=$(echo $chosen_line | cut -d ':' -f 1) # 获取行号
 
-    # 计算要删除的范围，从listen开始到remote结束
-    local start_line=$line_number
-    local end_line=$(($line_number + 2))
-
-    # 使用sed删除选中的转发规则
+    # 删除相关的三行：listen、remote 和 [[endpoints]]（如果存在）
+    local start_line=$((line_number - 1)) # listen 行
+    local end_line=$((line_number + 1))   # [[endpoints]] 行（如果存在）
     sed -i "${start_line},${end_line}d" /root/realm/config.toml
 
     echo "转发规则已删除。"
@@ -128,23 +128,70 @@ delete_forward() {
 
 # 添加转发规则
 add_forward() {
+    # 检查配置文件是否存在，如果不存在则创建基础配置
+    if [ ! -f "/root/realm/config.toml" ]; then
+        echo "[network]
+no_tcp = false
+use_udp = true
+
+[[endpoints]]" > /root/realm/config.toml
+        echo "已创建基础配置文件。"
+    elif ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
+        # 如果文件存在但没有 [[endpoints]] 节点，添加它
+        echo -e "\n[[endpoints]]" >> /root/realm/config.toml
+    fi
+
     while true; do
         read -p "请输入IP: " ip
         read -p "请输入端口: " port
         # 追加到config.toml文件
-        echo "[[endpoints]]
-listen = \"0.0.0.0:$port\"
-remote = \"$ip:$port\"" >> /root/realm/config.toml
+        echo "listen = \"0.0.0.0:$port\"
+remote = \"$ip:$port\"
+
+[[endpoints]]" >> /root/realm/config.toml
         
         read -p "是否继续添加(Y/N)? " answer
         if [[ $answer != "Y" && $answer != "y" ]]; then
+            # 删除最后一个多余的 [[endpoints]]
+            sed -i '$ d' /root/realm/config.toml
             break
         fi
     done
 }
 
+# 查看转发规则的函数
+show_forwards() {
+    if [ ! -f "/root/realm/config.toml" ]; then
+        echo "配置文件不存在，尚未添加任何转发规则。"
+        return
+    fi
+
+    echo "当前所有转发规则："
+    echo "=================="
+    
+    local IFS=$'\n'
+    local lines=($(grep 'remote =' /root/realm/config.toml))
+    
+    if [ ${#lines[@]} -eq 0 ]; then
+        echo "没有发现任何转发规则。"
+        return
+    fi
+
+    local index=1
+    for line in "${lines[@]}"; do
+        local remote=$(echo $line | cut -d '"' -f 2)
+        echo "$index. $remote"
+        let index+=1
+    done
+    echo "=================="
+}
+
 # 启动服务
 start_service() {
+    if systemctl is-active --quiet realm; then
+        echo "realm服务已经在运行中。"
+        return
+    fi
     sudo systemctl unmask realm.service
     sudo systemctl daemon-reload
     sudo systemctl restart realm.service
@@ -154,6 +201,10 @@ start_service() {
 
 # 停止服务
 stop_service() {
+    if ! systemctl is-active --quiet realm; then
+        echo "realm服务当前未运行。"
+        return
+    }
     systemctl stop realm
     echo "realm服务已停止。"
 }
@@ -170,20 +221,26 @@ while true; do
             add_forward
             ;;
         3)
-            delete_forward
+            show_forwards
             ;;
         4)
-            start_service
+            delete_forward
             ;;
         5)
-            stop_service
+            start_service
             ;;
         6)
+            stop_service
+            ;;
+        7)
             uninstall_realm
+            ;;
+        0)
+            echo "感谢使用，再见！"
+            exit 0
             ;;
         *)
             echo "无效选项: $choice"
             ;;
     esac
-    read -p "按任意键继续..." key
 done
