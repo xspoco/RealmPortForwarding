@@ -41,11 +41,34 @@ show_menu() {
 
 # 部署环境的函数
 deploy_realm() {
+    # 获取最新版本号
+    echo "正在获取最新版本信息..."
+    latest_version=$(curl -s https://api.github.com/repos/zhboner/realm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    
+    if [ -z "$latest_version" ]; then
+        echo "无法获取最新版本信息，请检查网络连接。"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    echo "检测到最新版本：${latest_version}"
     mkdir -p /root/realm
     cd /root/realm
-    wget -O realm.tar.gz https://github.com/zhboner/realm/releases/download/v2.6.0/realm-x86_64-unknown-linux-gnu.tar.gz
+    
+    echo "开始下载最新版本..."
+    wget -O realm.tar.gz "https://github.com/zhboner/realm/releases/download/${latest_version}/realm-x86_64-unknown-linux-gnu.tar.gz"
+    
+    if [ $? -ne 0 ]; then
+        echo "下载失败，请检查网络连接。"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    echo "解压文件..."
     tar -xvf realm.tar.gz
     chmod +x realm
+    rm -f realm.tar.gz  # 清理下载的压缩包
+    
     # 创建服务文件
     echo "[Unit]
 Description=realm
@@ -63,11 +86,12 @@ ExecStart=/root/realm/realm -c /root/realm/config.toml
 
 [Install]
 WantedBy=multi-user.target" > /etc/systemd/system/realm.service
+    
     systemctl daemon-reload
     # 更新realm状态变量
     realm_status="已安装"
     realm_status_color="\033[0;32m" # 绿色
-    echo "部署完成。"
+    echo "部署完成。当前版本：${latest_version}"
     read -n 1 -s -r -p "按任意键继续..."
 }
 
@@ -135,8 +159,18 @@ delete_forward() {
 
 # 添加转发规则
 add_forward() {
+    # 首先检查 realm 是否已安装
+    if [ ! -d "/root/realm" ]; then
+        echo "请先安装 realm（选项1）再添加转发规则。"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    }
+
     # 检查配置文件是否存在，如果不存在则创建基础配置
     if [ ! -f "/root/realm/config.toml" ]; then
+        # 确保目录存在
+        mkdir -p /root/realm
+        
         echo "[network]
 no_tcp = false
 use_udp = true
