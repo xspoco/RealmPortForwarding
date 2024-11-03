@@ -131,7 +131,6 @@ delete_forward() {
 
     echo "转发规则已删除。"
     read -n 1 -s -r -p "按任意键继续..."
-}
 
 # 添加转发规则
 add_forward() {
