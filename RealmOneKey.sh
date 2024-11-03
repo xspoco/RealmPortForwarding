@@ -94,7 +94,7 @@ delete_forward() {
         echo "没有发现任何转发规则。"
         read -n 1 -s -r -p "按任意键继续..."
         return
-    }
+    fi
     local index=1
     for line in "${lines[@]}"; do
         echo "${index}. $(echo $line | cut -d '"' -f 2)" # 提取并显示端口信息
@@ -131,6 +131,7 @@ delete_forward() {
 
     echo "转发规则已删除。"
     read -n 1 -s -r -p "按任意键继续..."
+}
 
 # 添加转发规则
 add_forward() {
