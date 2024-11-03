@@ -1,6 +1,5 @@
 ## 使用方法：
 复制并运行这个：`wget https://raw.githubusercontent.com/chzzfly/RealmPortForwarding/refs/heads/main/RealmOneKey.sh && chmod +x RealmOneKey.sh && ./RealmOneKey.sh`
-然后添加即可。
 
 ## 完善脚本
 原脚本已经很好的实现了一键安装环境和启动服务，不过还可以再进行一些完善：
