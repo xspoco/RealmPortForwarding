@@ -1,5 +1,6 @@
 ## 使用方法：
 复制这个运行：`wget https://raw.githubusercontent.com/chzzfly/RealmPortForwarding/refs/heads/main/RealmOneKey.sh && chmod +x RealmOneKey.sh && ./RealmOneKey.sh`
+
 后面再运行：`./RealmOneKey.sh` 即可
 
 ## 完善脚本
