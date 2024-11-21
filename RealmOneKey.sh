@@ -171,30 +171,23 @@ add_forward() {
         # 确保目录存在
         mkdir -p /root/realm
         
+        # 创建初始配置文件
         echo "[network]
 no_tcp = false
-use_udp = true
-
-[[endpoints]]" > /root/realm/config.toml
-        echo "已创建基础配置文件。"
-    elif ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
-        # 如果文件存在但没有 [[endpoints]] 节点，添加它
-        echo -e "\n[[endpoints]]" >> /root/realm/config.toml
+use_udp = true" > /root/realm/config.toml
     fi
 
     while true; do
         read -p "请输入目的地IP: " ip
         read -p "请输入目的地端口: " port
-        # 追加到config.toml文件
-        echo "listen = \"0.0.0.0:$port\"
-remote = \"$ip:$port\"
-
-[[endpoints]]" >> /root/realm/config.toml
+        
+        # 追加新的endpoints配置到config.toml文件
+        echo -e "\n[[endpoints]]
+listen = \"0.0.0.0:$port\"
+remote = \"$ip:$port\"" >> /root/realm/config.toml
         
         read -p "是否继续添加(Y/N)? " answer
         if [[ $answer != "Y" && $answer != "y" ]]; then
-            # 删除最后一个多余的 [[endpoints]]
-            sed -i '$ d' /root/realm/config.toml
             echo "转发规则添加完成。"
             read -n 1 -s -r -p "按任意键继续..."
             break
