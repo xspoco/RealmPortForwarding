@@ -97,16 +97,59 @@ WantedBy=multi-user.target" > /etc/systemd/system/realm.service
 
 # 卸载realm
 uninstall_realm() {
+    echo "开始卸载 realm..."
+    echo "正在执行以下操作："
+    
+    echo "1. 停止 realm 服务..."
     systemctl stop realm
+    echo "   ✓ 服务已停止"
+    
+    echo "2. 禁用 realm 服务自启动..."
     systemctl disable realm
-    rm -f /etc/systemd/system/realm.service
+    echo "   ✓ 服务自启动已禁用"
+    
+    echo "3. 删除 realm 服务文件..."
+    if [ -f "/etc/systemd/system/realm.service" ]; then
+        rm -f /etc/systemd/system/realm.service
+        echo "   ✓ 服务文件已删除：/etc/systemd/system/realm.service"
+    else
+        echo "   - 服务文件不存在，跳过"
+    fi
+    
+    echo "4. 重新加载 systemd..."
     systemctl daemon-reload
-    rm -rf /root/realm
-    echo "realm已被卸载。"
+    echo "   ✓ systemd 已重新加载"
+    
+    echo "5. 删除 realm 程序及配置..."
+    if [ -d "/root/realm" ]; then
+        echo "   - 删除配置文件：/root/realm/config.toml"
+        echo "   - 删除主程序：/root/realm/realm"
+        rm -rf /root/realm
+        echo "   ✓ realm 目录已完全删除"
+    else
+        echo "   - realm 目录不存在，跳过"
+    fi
+
     # 更新realm状态变量
     realm_status="未安装"
     realm_status_color="\033[0;31m" # 红色
-    read -n 1 -s -r -p "按任意键继续..."
+    
+    echo "6. 删除本脚本..."
+    echo "   即将删除：$0"
+    echo "realm 已完全卸载。"
+    read -n 1 -s -r -p "按任意键删除脚本并退出..."
+    
+    # 创建一个临时脚本来删除本脚本并退出
+    local temp_script="/tmp/remove_script.sh"
+    echo "#!/bin/bash
+sleep 1
+rm -f \"$0\"
+rm -f \"$temp_script\"" > "$temp_script"
+    chmod +x "$temp_script"
+    
+    # 在后台运行临时脚本并退出
+    nohup "$temp_script" >/dev/null 2>&1 &
+    exit 0
 }
 
 # 删除转发规则的函数
