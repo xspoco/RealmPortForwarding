@@ -137,7 +137,8 @@ uninstall_realm() {
     echo "6. 删除本脚本..."
     echo "   即将删除：$0"
     echo "realm 已完全卸载。"
-    read -n 1 -s -r -p "按任意键删除脚本并退出..."
+    echo -e "按任意键删除脚本并退出..."
+    read -n 1 -s -r
     
     # 创建一个临时脚本来删除本脚本并退出
     local temp_script="/tmp/remove_script.sh"
@@ -402,14 +403,14 @@ check_config_file() {
 start_service() {
     if systemctl is-active --quiet realm; then
         echo "realm服务已经在运行中。"
-        read -n 1 -s -r -p "按任意键继续..."
+        sleep 3
         return
     fi
 
     # 检查配置文件
     if ! check_config_file; then
         echo "启动失败：配置文件存在错误，请检查配置文件（/root/realm/config.toml）。"
-        read -n 1 -s -r -p "按任意键继续..."
+        read -n 1 -s -r -p "按任意键继续..."  # 错误情况保留read，让用户确认看到错误信息
         return
     fi
 
@@ -432,24 +433,24 @@ start_service() {
     if ! systemctl is-active --quiet realm; then
         echo "realm服务启动失败。查看详细错误信息："
         systemctl status realm
-        read -n 1 -s -r -p "按任意键继续..."
+        read -n 1 -s -r -p "按任意键继续..."  # 错误情况保留read，让用户确认看到错误信息
         return
     fi
 
     echo "realm服务已启动并设置为开机自启。"
-    read -n 1 -s -r -p "按任意键继续..."
+    sleep 3
 }
 
 # 停止服务
 stop_service() {
     if ! systemctl is-active --quiet realm; then
         echo "realm服务当前未运行。"
-        read -n 1 -s -r -p "按任意键继续..."
+        sleep 3
         return
     fi
     systemctl stop realm
     echo "realm服务已停止。"
-    read -n 1 -s -r -p "按任意键继续..."
+    sleep 3
 }
 
 # 主循环
