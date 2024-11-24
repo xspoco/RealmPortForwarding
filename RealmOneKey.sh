@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# 检查是否为root用户
+if [ "$EUID" -ne 0 ]; then
+    echo "此脚本需要root权限才能运行，请切换到root用户后运行"
+    exit 1
+fi
+
 # 检查realm是否已安装
 if [ -f "/root/realm/realm" ]; then
     echo "检测到realm已安装。"
