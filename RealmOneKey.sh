@@ -418,20 +418,29 @@ start_service() {
     fi
 
     # 执行服务操作
-    local service_cmds=(
-        "systemctl unmask realm.service"
-        "systemctl daemon-reload"
-        "systemctl restart realm.service"
-        "systemctl enable realm.service"
-    )
+    if ! systemctl unmask realm.service; then
+        echo "服务操作失败：无法解除服务屏蔽"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
 
-    for cmd in "${service_cmds[@]}"; do
-        if ! $cmd; then
-            echo "服务操作失败：${cmd}"
-            read -n 1 -s -r -p "按任意键继续..."
-            return
-        fi
-    done
+    if ! systemctl daemon-reload; then
+        echo "服务操作失败：无法重载系统服务"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+
+    if ! systemctl restart realm.service; then
+        echo "服务操作失败：无法重启服务"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+
+    if ! systemctl enable realm.service; then
+        echo "服务操作失败：无法设置服务自启动"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
 
     # 给服务一点启动时间
     sleep 1
