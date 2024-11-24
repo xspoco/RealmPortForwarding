@@ -2,7 +2,7 @@
 
 # 检查是否为root用户
 if [ "$EUID" -ne 0 ]; then
-    echo "此脚本需要root权限才能运行，请切换到root用户"
+    echo "此脚本需要root权限才能运行，可以使用 'su -' 切换到root用户再运行。"
     exit 1
 fi
 
