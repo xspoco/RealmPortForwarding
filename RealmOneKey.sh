@@ -411,12 +411,27 @@ start_service() {
 
     echo "正在启动realm服务..."
     
-    # 使用shell执行命令链
-    if ! check_permission "sh -c 'systemctl unmask realm.service && systemctl daemon-reload && systemctl restart realm.service && systemctl enable realm.service'"; then
-        echo "服务启动失败：权限不足。"
-        read -n 1 -s -r -p "按任意键继续..."
+    # 首先检查权限
+    if ! check_permission "systemctl --version"; then
+        echo "权限不足：需要root权限或sudo权限来管理系统服务。"
         return
     fi
+
+    # 执行服务操作
+    local service_cmds=(
+        "systemctl unmask realm.service"
+        "systemctl daemon-reload"
+        "systemctl restart realm.service"
+        "systemctl enable realm.service"
+    )
+
+    for cmd in "${service_cmds[@]}"; do
+        if ! $cmd; then
+            echo "服务操作失败：${cmd}"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+    done
 
     # 给服务一点启动时间
     sleep 1
