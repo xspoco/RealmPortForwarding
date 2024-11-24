@@ -411,8 +411,8 @@ start_service() {
 
     echo "正在启动realm服务..."
     
-    # 首先检查权限（使用更安静的命令）
-    if ! check_permission "systemctl show-environment >/dev/null 2>&1"; then
+    # 首先检查权限
+    if ! check_permission "systemctl show-environment" ; then
         echo "权限不足：需要root权限或sudo权限来管理系统服务。"
         return
     fi
