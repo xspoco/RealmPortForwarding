@@ -311,11 +311,11 @@ check_permission() {
     local cmd=$1
     if [ "$EUID" -eq 0 ]; then
         # root用户直接执行
-        $cmd
+        $cmd >/dev/null 2>&1
     else
         # 非root用户，检查是否有sudo
         if command -v sudo >/dev/null 2>&1; then
-            sudo $cmd
+            sudo $cmd >/dev/null 2>&1
         else
             echo "错误：当前用户不是root用户，且未安装sudo。"
             echo "请选择以下方式之一："
@@ -413,30 +413,29 @@ start_service() {
     
     # 首先检查权限
     if ! check_permission "systemctl show-environment" ; then
-        echo "权限不足：需要root权限或sudo权限来管理系统服务。"
         return
     fi
-
+    
     # 执行服务操作
-    if ! systemctl unmask realm.service; then
+    if ! check_permission "systemctl unmask realm.service" ; then
         echo "服务操作失败：无法解除服务屏蔽"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
-    if ! systemctl daemon-reload; then
+    if ! check_permission "systemctl daemon-reload" ; then
         echo "服务操作失败：无法重载系统服务"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
-    if ! systemctl restart realm.service; then
+    if ! check_permission "systemctl restart realm.service" ; then
         echo "服务操作失败：无法重启服务"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
-    if ! systemctl enable realm.service; then
+    if ! check_permission "systemctl enable realm.service" ; then
         echo "服务操作失败：无法设置服务自启动"
         read -n 1 -s -r -p "按任意键继续..."
         return
