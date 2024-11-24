@@ -409,14 +409,16 @@ start_service() {
         return
     fi
 
-    # 一次性执行所有systemctl命令
-    if ! check_permission "systemctl unmask realm.service && systemctl daemon-reload && systemctl restart realm.service && systemctl enable realm.service"; then
+    echo "正在启动realm服务..."
+    
+    # 使用shell执行命令链
+    if ! check_permission "sh -c 'systemctl unmask realm.service && systemctl daemon-reload && systemctl restart realm.service && systemctl enable realm.service'"; then
         echo "服务启动失败：权限不足。"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
-    # 给服务一点启动时间，但减少等待时间
+    # 给服务一点启动时间
     sleep 1
     if ! systemctl is-active --quiet realm; then
         echo "realm服务启动失败。查看详细错误信息："
