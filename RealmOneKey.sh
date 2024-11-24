@@ -161,85 +161,80 @@ delete_forward() {
         return
     fi
 
-    echo "当前转发规则："
-    local IFS=$'\n' # 设置IFS仅以换行符作为分隔符
-    local lines=($(grep -n 'remote =' /root/realm/config.toml)) # 搜索所有包含转发规则的行
-    if [ ${#lines[@]} -eq 0 ]; then
+    # 使用awk一次性读取并处理文件
+    local rules=$(awk '/remote =/ {
+        gsub(/.*"/, "");
+        gsub(/".*/, "");
+        print NR ":" $0
+    }' /root/realm/config.toml)
+
+    if [ -z "$rules" ]; then
         echo "没有发现任何转发规则。"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
+
+    echo "当前转发规则："
     local index=1
-    for line in "${lines[@]}"; do
-        echo "${index}. $(echo $line | cut -d '"' -f 2)" # 提取并显示端口信息
+    while IFS=: read -r line_num target; do
+        echo "${index}. ${target}"
         let index+=1
-    done
+    done <<< "$rules"
 
     echo "请输入要删除的转发规则序号，直接按回车返回主菜单。"
     read -p "选择: " choice
+
     if [ -z "$choice" ]; then
         echo "返回主菜单。"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
-    if ! [[ $choice =~ ^[0-9]+$ ]]; then
-        echo "无效输入，请输入数字。"
+    if ! [[ $choice =~ ^[0-9]+$ ]] || [ $choice -lt 1 ] || [ $choice -gt $((index-1)) ]; then
+        echo "无效的选择。"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
-    if [ $choice -lt 1 ] || [ $choice -gt ${#lines[@]} ]; then
-        echo "选择超出范围，请输入有效序号。"
-        read -n 1 -s -r -p "按任意键继续..."
-        return
-    fi
+    # 使用awk一次性完成规则块的删除和文件修复
+    awk -v target_idx="$choice" '
+    BEGIN { 
+        count = 0 
+        printing = 1
+        found_target = 0
+    }
+    /^\[\[endpoints\]\]/ { 
+        if (printing) {
+            count++ 
+            if (count == target_idx) {
+                printing = 0
+                found_target = 1
+                next
+            }
+        } else {
+            printing = 1
+        }
+    }
+    printing { print }
+    END {
+        if (!found_target) {
+            exit 1
+        }
+    }' /root/realm/config.toml > /root/realm/config.toml.tmp
 
-    local chosen_line=${lines[$((choice-1))]} # 根据用户选择获取相应行
-    local line_number=$(echo $chosen_line | cut -d ':' -f 1) # 获取行号
+    if [ $? -eq 0 ]; then
+        mv /root/realm/config.toml.tmp /root/realm/config.toml
 
-    # 找到要删除的规则块的起始和结束行
-    local start_line
-    local end_line
-    
-    # 向上搜索[[endpoints]]
-    start_line=$line_number
-    while [ $start_line -gt 1 ]; do
-        local prev_line=$((start_line-1))
-        if grep -q "^\[\[endpoints\]\]$" <(sed -n "${prev_line}p" /root/realm/config.toml); then
-            start_line=$prev_line
-            break
+        # 检查并确保基本配置存在
+        if [ ! -s "/root/realm/config.toml" ] || ! grep -q "^\[network\]$" /root/realm/config.toml; then
+            echo -e "[network]\nno_tcp = false\nuse_udp = true\n$(cat /root/realm/config.toml 2>/dev/null)" > /root/realm/config.toml
         fi
-        start_line=$prev_line
-    done
 
-    # 向下搜索下一个[[endpoints]]或文件结束
-    end_line=$line_number
-    local file_length=$(wc -l < /root/realm/config.toml)
-    while [ $end_line -lt $file_length ]; do
-        local next_line=$((end_line+1))
-        if grep -q "^\[\[endpoints\]\]$" <(sed -n "${next_line}p" /root/realm/config.toml); then
-            end_line=$((next_line-1))
-            break
-        fi
-        end_line=$next_line
-    done
-
-    # 删除整个规则块
-    sed -i "${start_line},${end_line}d" /root/realm/config.toml
-
-    # 检查并修复配置文件格式
-    if [ ! -s "/root/realm/config.toml" ]; then
-        # 如果文件为空，重新创建基本配置
-        echo "[network]
-no_tcp = false
-use_udp = true" > /root/realm/config.toml
-    elif ! grep -q "^\[network\]$" /root/realm/config.toml; then
-        # 如果没有[network]配置，添加它
-        sed -i '1i[network]\nno_tcp = false\nuse_udp = true\n' /root/realm/config.toml
+        echo "转发规则已删除。"
+    else
+        rm -f /root/realm/config.toml.tmp
+        echo "删除操作失败。"
     fi
-
-    echo "转发规则已删除。"
     read -n 1 -s -r -p "按任意键继续..."
 }
 
@@ -403,7 +398,7 @@ check_config_file() {
 start_service() {
     if systemctl is-active --quiet realm; then
         echo "realm服务已经在运行中。"
-        sleep 3
+        sleep 2
         return
     fi
 
@@ -414,22 +409,15 @@ start_service() {
         return
     fi
 
-    # 使用check_permission函数执行命令
-    if ! check_permission "systemctl unmask realm.service"; then
-        return
-    fi
-    if ! check_permission "systemctl daemon-reload"; then
-        return
-    fi
-    if ! check_permission "systemctl restart realm.service"; then
-        return
-    fi
-    if ! check_permission "systemctl enable realm.service"; then
+    # 一次性执行所有systemctl命令
+    if ! check_permission "systemctl unmask realm.service && systemctl daemon-reload && systemctl restart realm.service && systemctl enable realm.service"; then
+        echo "服务启动失败：权限不足。"
+        read -n 1 -s -r -p "按任意键继续..."
         return
     fi
 
-    # 检查服务是否成功启动
-    sleep 2
+    # 给服务一点启动时间，但减少等待时间
+    sleep 1
     if ! systemctl is-active --quiet realm; then
         echo "realm服务启动失败。查看详细错误信息："
         systemctl status realm
@@ -438,19 +426,19 @@ start_service() {
     fi
 
     echo "realm服务已启动并设置为开机自启。"
-    sleep 3
+    sleep 2
 }
 
 # 停止服务
 stop_service() {
     if ! systemctl is-active --quiet realm; then
         echo "realm服务当前未运行。"
-        sleep 3
+        sleep 2
         return
     fi
     systemctl stop realm
     echo "realm服务已停止。"
-    sleep 3
+    sleep 2
 }
 
 # 主循环
