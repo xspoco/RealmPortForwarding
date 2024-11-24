@@ -398,7 +398,7 @@ check_config_file() {
 start_service() {
     if systemctl is-active --quiet realm; then
         echo "realm服务已经在运行中。"
-        sleep 2
+        sleep 1
         return
     fi
 
@@ -411,8 +411,8 @@ start_service() {
 
     echo "正在启动realm服务..."
     
-    # 首先检查权限
-    if ! check_permission "systemctl --version"; then
+    # 首先检查权限（使用更安静的命令）
+    if ! check_permission "systemctl show-environment >/dev/null 2>&1"; then
         echo "权限不足：需要root权限或sudo权限来管理系统服务。"
         return
     fi
@@ -443,19 +443,19 @@ start_service() {
     fi
 
     echo "realm服务已启动并设置为开机自启。"
-    sleep 2
+    sleep 1
 }
 
 # 停止服务
 stop_service() {
     if ! systemctl is-active --quiet realm; then
         echo "realm服务当前未运行。"
-        sleep 2
+        sleep 1
         return
     fi
     systemctl stop realm
     echo "realm服务已停止。"
-    sleep 2
+    sleep 1
 }
 
 # 主循环
