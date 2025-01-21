@@ -195,28 +195,41 @@ show_forwards() {
     echo "当前所有转发规则："
     echo "=================="
     
-    awk '
-    /\[\[endpoints\]\]/ {in_endpoint=1; next}
-    in_endpoint && /listen =/ {
-        gsub(/.*"/, "");
-        gsub(/".*/, "");
-        listen=$0;
-    }
-    in_endpoint && /remote =/ {
-        gsub(/.*"/, "");
-        gsub(/".*/, "");
-        remote=$0;
-        printf "本地端口 %s -> %s\n", listen, remote;
-        in_endpoint=0;
-    }' /root/realm/config.toml
+    # 使用更可靠的方式解析 TOML 文件
+    local in_endpoint=0
+    local listen=""
+    local remote=""
+    
+    while IFS= read -r line; do
+        # 去除行首尾的空白字符
+        line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        if [[ "$line" == "[[endpoints]]" ]]; then
+            in_endpoint=1
+            continue
+        fi
+        
+        if [ $in_endpoint -eq 1 ]; then
+            if [[ "$line" =~ ^listen[[:space:]]*=[[:space:]]*\"(.*)\"$ ]]; then
+                listen="${BASH_REMATCH[1]}"
+            elif [[ "$line" =~ ^remote[[:space:]]*=[[:space:]]*\"(.*)\"$ ]]; then
+                remote="${BASH_REMATCH[1]}"
+                echo "本地端口 $listen -> $remote"
+                listen=""
+                remote=""
+                in_endpoint=0
+            fi
+        fi
+    done < "/root/realm/config.toml"
 
-    if [ $? -ne 0 ] || [ -z "$(grep '\[\[endpoints\]\]' /root/realm/config.toml)" ]; then
+    if [ ! -s "/root/realm/config.toml" ] || ! grep -q "\[\[endpoints\]\]" "/root/realm/config.toml"; then
         echo "没有发现任何转发规则。"
     fi
     
     echo "=================="
     read -n 1 -s -r -p "按任意键继续..."
 }
+
 
 # 删除转发规则的函数
 delete_forward() {
