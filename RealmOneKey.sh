@@ -124,13 +124,14 @@ validate_port() {
     fi
     return 1
 }
+
 # 添加转发规则
 add_forward() {
     if [ ! -d "/root/realm" ]; then
         echo "请先安装 realm（选项1）再添加转发规则。"
         read -n 1 -s -r -p "按任意键继续..."
         return
-    }
+    fi
 
     if [ ! -f "/root/realm/config.toml" ]; then
         mkdir -p /root/realm
@@ -189,7 +190,7 @@ show_forwards() {
         echo "配置文件不存在，尚未添加任何转发规则。"
         read -n 1 -s -r -p "按任意键继续..."
         return
-    }
+    fi
 
     echo "当前所有转发规则："
     echo "=================="
@@ -217,8 +218,144 @@ show_forwards() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
-# 其他函数保持不变...
-[其余代码保持不变]
+# 删除转发规则的函数
+delete_forward() {
+    if [ ! -f "/root/realm/config.toml" ]; then
+        echo "配置文件不存在，没有可删除的转发规则。"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+
+    # 创建临时文件来存储规则和它们的行号
+    local temp_file=$(mktemp)
+    local rule_count=0
+    
+    echo "当前转发规则："
+    echo "=================="
+    
+    # 使用awk提取并显示所有规则
+    awk '
+    /\[\[endpoints\]\]/ {in_endpoint=1; next}
+    in_endpoint && /listen =/ {
+        gsub(/.*"/, "");
+        gsub(/".*/, "");
+        listen=$0;
+    }
+    in_endpoint && /remote =/ {
+        gsub(/.*"/, "");
+        gsub(/".*/, "");
+        remote=$0;
+        rule_count++;
+        printf "%d) 本地端口 %s -> %s\n", rule_count, listen, remote;
+        in_endpoint=0;
+    }' /root/realm/config.toml > "$temp_file"
+    
+    if [ ! -s "$temp_file" ]; then
+        echo "没有找到任何转发规则。"
+        rm "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    cat "$temp_file"
+    echo "=================="
+    
+    # 获取规则总数
+    rule_count=$(wc -l < "$temp_file")
+    
+    while true; do
+        read -p "请输入要删除的规则编号 (1-$rule_count)，输入 0 取消: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -le "$rule_count" ]; then
+            break
+        else
+            echo "无效的选择，请重新输入。"
+        fi
+    done
+    
+    if [ "$choice" -eq 0 ]; then
+        echo "取消删除操作。"
+        rm "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    # 创建新的配置文件
+    local new_config=$(mktemp)
+    echo "[network]
+no_tcp = false
+use_udp = true" > "$new_config"
+    
+    # 计数器
+    local current_rule=0
+    
+    # 从原配置文件中提取规则
+    awk -v target="$choice" '
+    /\[\[endpoints\]\]/ {
+        in_endpoint=1;
+        buffer="[[endpoints]]\n";
+        next;
+    }
+    in_endpoint {
+        buffer = buffer $0 "\n";
+        if ($0 ~ /remote =/) {
+            current_rule++;
+            if (current_rule != target) {
+                printf "%s", buffer;
+            }
+            in_endpoint=0;
+        }
+    }
+    !in_endpoint && !/\[network\]/ && !/no_tcp =/ && !/use_udp =/' /root/realm/config.toml >> "$new_config"
+    
+    # 替换原配置文件
+    mv "$new_config" /root/realm/config.toml
+    
+    echo "规则已删除。"
+    rm "$temp_file"
+    
+    # 重启服务以应用更改
+    systemctl restart realm
+    
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 启动服务的函数
+start_service() {
+    if ! systemctl is-active --quiet realm; then
+        systemctl start realm
+        echo "realm 服务已启动"
+    else
+        echo "realm 服务已经在运行中"
+    fi
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 停止服务的函数
+stop_service() {
+    if systemctl is-active --quiet realm; then
+        systemctl stop realm
+        echo "realm 服务已停止"
+    else
+        echo "realm 服务未在运行"
+    fi
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 卸载realm的函数
+uninstall_realm() {
+    if systemctl is-active --quiet realm; then
+        systemctl stop realm
+    fi
+    systemctl disable realm 2>/dev/null
+    rm -f /etc/systemd/system/realm.service
+    rm -rf /root/realm
+    systemctl daemon-reload
+    # 更新realm状态变量
+    realm_status="未安装"
+    realm_status_color="\033[0;31m" # 红色
+    echo "realm 已完全卸载"
+    read -n 1 -s -r -p "按任意键继续..."
+}
 
 # 主循环
 while true; do
