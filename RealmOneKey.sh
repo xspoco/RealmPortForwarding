@@ -1,7 +1,20 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.4.3"
+VERSION="1.4.4"
+
+# 定义颜色变量
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+RED="\033[0;31m"
+CYAN="\033[0;36m"
+NC="\033[0m" # No Color
+BOLD="\033[1m"
+UNDERLINE="\033[4m"
+
+# 初始化状态变量
+realm_status="未安装"
+realm_status_color="$RED"
 
 # 版本号比较函数
 compare_versions() {
@@ -961,56 +974,108 @@ show_menu() {
     echo
     
     # 输入提示
-    echo -e "${YELLOW}请输入选项编号: ${NC}"
+    echo -n -e "${YELLOW}请输入选项编号: ${NC}"
 }
 
 # 主循环
 while true; do
     show_menu
     read -r choice
+    echo
+    
     case $choice in
         1)
             deploy_realm
             ;;
         2)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}请先安装 Realm（选项1）再添加转发规则${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             add_forward
             ;;
         3)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}请先安装 Realm（选项1）再查看转发规则${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             show_forwards
             ;;
         4)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}请先安装 Realm（选项1）再删除转发规则${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             delete_forward
             ;;
         5)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}请先安装 Realm（选项1）再启动服务${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             start_service
             ;;
         6)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}请先安装 Realm（选项1）再停止服务${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             stop_service
             ;;
         7)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}请先安装 Realm（选项1）再重启服务${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             restart_service
             ;;
         8)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}请先安装 Realm（选项1）再查看服务状态${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             check_service_details
             ;;
         9)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}Realm 未安装，无需卸载${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             uninstall_realm
             ;;
         10)
             update_script
             ;;
         11)
+            if [ ! -f "/root/realm/config.toml" ]; then
+                echo -e "${RED}没有找到配置文件，无法备份${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             backup_config
             ;;
         12)
+            if [ ! -d "/root/realm/backups" ]; then
+                echo -e "${RED}没有找到备份文件夹，无法恢复${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
             backup_restore_config "restore"
             ;;
         0)
-            echo "感谢使用！"
+            echo -e "${GREEN}感谢使用！${NC}"
             exit 0
             ;;
         *)
-            echo "无效的选项，请重新选择"
+            echo -e "${RED}无效的选项，请重新选择${NC}"
             read -n 1 -s -r -p "按任意键继续..."
             ;;
     esac
