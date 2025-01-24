@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.3.2"
+VERSION="1.3.4"
 
 # 版本号比较函数
 compare_versions() {
@@ -52,13 +52,157 @@ else
     realm_status_color="\033[0;31m" # 红色
 fi
 
-# 检查realm服务状态
+# 检查realm服务状态的函数
 check_realm_service_status() {
-    if systemctl is-active --quiet realm; then
-        echo -e "\033[0;32m启用\033[0m" # 绿色
-    else
-        echo -e "\033[0;31m未启用\033[0m" # 红色
+    # 检查服务是否存在
+    if ! systemctl list-unit-files | grep -q realm.service; then
+        echo -e "\033[0;31m未安装\033[0m"
+        return 1
     fi
+    
+    # 检查服务状态
+    if systemctl is-active --quiet realm; then
+        # 检查端口是否正在监听
+        if netstat -tuln | grep -q ":80\|:443"; then
+            echo -e "\033[0;32m运行中\033[0m"
+            return 0
+        else
+            echo -e "\033[0;33m运行中（端口未监听）\033[0m"
+            return 2
+        fi
+    else
+        echo -e "\033[0;31m未运行\033[0m"
+        return 1
+    fi
+}
+
+# 检查服务详细状态
+check_service_details() {
+    if ! systemctl list-unit-files | grep -q realm.service; then
+        echo -e "\033[0;31m服务未安装\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    echo "Realm 服务状态详情："
+    echo "----------------------------------------"
+    
+    # 检查服务状态
+    echo -n "运行状态: "
+    if systemctl is-active --quiet realm; then
+        echo -e "\033[0;32m运行中\033[0m"
+    else
+        echo -e "\033[0;31m未运行\033[0m"
+    fi
+    
+    # 检查开机启动状态
+    echo -n "开机启动: "
+    if systemctl is-enabled --quiet realm; then
+        echo -e "\033[0;32m已启用\033[0m"
+    else
+        echo -e "\033[0;31m未启用\033[0m"
+    fi
+    
+    # 检查端口状态
+    echo "端口状态:"
+    local ports=$(netstat -tuln | grep -E ":80|:443")
+    if [ -n "$ports" ]; then
+        echo "$ports" | while read -r line; do
+            echo -e "\033[0;32m$line\033[0m"
+        done
+    else
+        echo -e "\033[0;31m无端口监听\033[0m"
+    fi
+    
+    # 显示资源使用情况
+    echo "资源使用:"
+    local pid=$(systemctl show -p MainPID realm | cut -d= -f2)
+    if [ "$pid" != "0" ]; then
+        echo "CPU使用率: $(ps -p $pid -o %cpu | tail -n 1)%"
+        echo "内存使用: $(ps -p $pid -o rss | tail -n 1 | awk '{printf "%.2f MB\n",$1/1024}')"
+    else
+        echo -e "\033[0;31m进程未运行\033[0m"
+    fi
+    
+    # 显示最后100行日志
+    echo "----------------------------------------"
+    echo "最近日志:"
+    journalctl -u realm -n 100 --no-pager
+    
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 部署realm的函数
+deploy_realm() {
+    # 检查是否已安装
+    if [ -d "/root/realm" ]; then
+        echo "realm 已经安装，如需重新安装请先卸载"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    # 创建目录
+    mkdir -p /root/realm
+    chmod 700 /root/realm
+    cd /root/realm || exit
+    
+    echo "正在下载realm..."
+    if ! curl -L -o realm.tar.gz https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-gnu.tar.gz; then
+        echo -e "\033[0;31m下载失败\033[0m"
+        rm -rf /root/realm
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    # 解压
+    if ! tar -xzf realm.tar.gz; then
+        echo -e "\033[0;31m解压失败\033[0m"
+        rm -rf /root/realm
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    # 设置执行权限
+    chmod +x realm
+    
+    # 创建配置文件
+    echo '[common]
+port = "80"
+token = "realm"' > config.toml
+    chmod 600 config.toml
+    
+    # 创建服务文件
+    echo "[Unit]
+Description=realm forward service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Restart=on-failure
+RestartSec=5s
+ExecStart=/root/realm/realm -c /root/realm/config.toml
+WorkingDirectory=/root/realm
+
+[Install]
+WantedBy=multi-user.target" > /etc/systemd/system/realm.service
+    
+    systemctl daemon-reload
+    # 设置开机自启动
+    systemctl enable realm
+    # 更新realm状态变量
+    realm_status="已安装"
+    realm_status_color="\033[0;32m" # 绿色
+    
+    # 清理下载文件
+    rm -f realm.tar.gz
+    
+    echo -e "\033[0;32m部署完成\033[0m"
+    echo "配置文件位置：/root/realm/config.toml"
+    echo "默认端口：80"
+    echo "默认令牌：realm"
+    echo "请根据需要修改配置文件后重启服务"
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 备份配置文件的函数
@@ -72,10 +216,18 @@ backup_config() {
         echo -e "\033[0;31m错误：未找到配置文件\033[0m"
         read -n 1 -s -r -p "按任意键继续..."
         return 1
-    }
+    fi
     
-    # 创建备份目录
+    # 创建备份目录并设置权限
     mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir"
+    
+    # 检查目录权限
+    if [ ! -w "$backup_dir" ]; then
+        echo -e "\033[0;31m错误：备份目录无写入权限\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
     
     # 生成备份文件名（带时间戳）
     local timestamp=$(date +"%Y%m%d_%H%M%S")
@@ -96,6 +248,8 @@ backup_config() {
         fi
     else
         echo -e "\033[0;31m备份失败\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
     fi
     
     read -n 1 -s -r -p "按任意键继续..."
@@ -106,189 +260,88 @@ backup_config() {
 backup_restore_config() {
     local action=$1
     local backup_dir="/root/realm/backups"
-    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local config_file="/root/realm/config.toml"
     
     case $action in
         "backup")
-            # 创建备份目录
-            mkdir -p "$backup_dir"
-            if [ -f "/root/realm/config.toml" ]; then
-                cp "/root/realm/config.toml" "$backup_dir/config_$timestamp.toml"
-                echo "配置已备份到: $backup_dir/config_$timestamp.toml"
-            else
-                echo "没有找到配置文件，无法备份"
-            fi
+            backup_config
             ;;
         "restore")
-            # 列出所有备份
-            if [ ! -d "$backup_dir" ] || [ -z "$(ls -A "$backup_dir")" ]; then
-                echo "没有找到任何备份文件"
+            if [ ! -d "$backup_dir" ]; then
+                echo -e "\033[0;31m错误：未找到备份目录\033[0m"
+                read -n 1 -s -r -p "按任意键继续..."
                 return
             fi
             
+            # 列出所有备份文件
             echo "可用的备份文件："
             local i=1
-            local backups=()
+            local backup_files=()
             while IFS= read -r file; do
                 echo "$i) $(basename "$file") ($(date -r "$file" '+%Y-%m-%d %H:%M:%S'))"
-                backups+=("$file")
+                backup_files+=("$file")
                 ((i++))
             done < <(ls -t "$backup_dir"/config_*.toml 2>/dev/null)
             
-            read -p "请选择要恢复的备份编号 (0 取消): " choice
-            if [ "$choice" -gt 0 ] && [ "$choice" -le "${#backups[@]}" ]; then
-                cp "${backups[choice-1]}" "/root/realm/config.toml"
-                echo "配置已恢复"
-                systemctl restart realm
-                echo "服务已重启"
+            if [ ${#backup_files[@]} -eq 0 ]; then
+                echo -e "\033[0;31m没有找到可用的备份文件\033[0m"
+                read -n 1 -s -r -p "按任意键继续..."
+                return
+            fi
+            
+            # 选择要恢复的备份
+            read -p "请选择要恢复的备份文件编号（输入0取消）: " choice
+            if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#backup_files[@]} ]; then
+                echo -e "\033[0;31m无效的选择\033[0m"
+                read -n 1 -s -r -p "按任意键继续..."
+                return
+            fi
+            
+            if [ "$choice" -eq 0 ]; then
+                echo "取消恢复"
+                read -n 1 -s -r -p "按任意键继续..."
+                return
+            fi
+            
+            local selected_backup="${backup_files[$((choice-1))]}"
+            
+            # 验证备份文件格式
+            if ! verify_config "$selected_backup"; then
+                echo -e "\033[0;31m错误：选择的备份文件格式无效\033[0m"
+                read -n 1 -s -r -p "按任意键继续..."
+                return
+            fi
+            
+            # 备份当前配置
+            if [ -f "$config_file" ]; then
+                cp "$config_file" "${config_file}.$(date +%s).bak"
+            fi
+            
+            # 恢复配置
+            cp "$selected_backup" "$config_file"
+            if [ $? -eq 0 ]; then
+                echo -e "\033[0;32m配置已恢复\033[0m"
+                
+                # 如果服务正在运行，重启服务
+                if systemctl is-active --quiet realm; then
+                    echo "正在重启realm服务..."
+                    systemctl restart realm
+                    if [ $? -eq 0 ]; then
+                        echo -e "\033[0;32m服务已重启\033[0m"
+                    else
+                        echo -e "\033[0;31m服务重启失败\033[0m"
+                    fi
+                fi
             else
-                echo "取消恢复操作"
+                echo -e "\033[0;31m恢复失败\033[0m"
             fi
             ;;
     esac
-    read -n 1 -s -r -p "按任意键继续..."
-}
-
-# 检查服务状态详细信息
-check_service_details() {
-    # 检查服务是否正在运行
-    local is_active=$(systemctl is-active realm)
-    local is_enabled=$(systemctl is-enabled realm 2>/dev/null)
-    local service_pid=$(systemctl show -p MainPID realm | cut -d'=' -f2)
-    local mem_usage=""
-    local cpu_usage=""
-    
-    echo "Realm 服务状态:"
-    echo "---------------"
-    echo -n "运行状态: "
-    if [ "$is_active" = "active" ]; then
-        echo -e "\033[0;32m运行中\033[0m"
-        # 获取内存和CPU使用情况
-        if [ "$service_pid" -gt 0 ]; then
-            mem_usage=$(ps -o rss= -p "$service_pid" 2>/dev/null)
-            if [ ! -z "$mem_usage" ]; then
-                mem_usage=$(awk "BEGIN {printf \"%.2f\", $mem_usage/1024}")
-                echo "内存使用: ${mem_usage}MB"
-            fi
-            
-            cpu_usage=$(ps -o %cpu= -p "$service_pid" 2>/dev/null)
-            if [ ! -z "$cpu_usage" ]; then
-                echo "CPU使用率: ${cpu_usage}%"
-            fi
-        fi
-    else
-        echo -e "\033[0;31m未运行\033[0m"
-    fi
-    
-    echo -n "开机启动: "
-    if [ "$is_enabled" = "enabled" ]; then
-        echo -e "\033[0;32m是\033[0m"
-    else
-        echo -e "\033[0;31m否\033[0m"
-    fi
-    
-    # 检查端口占用
-    if [ "$is_active" = "active" ]; then
-        echo -e "\n当前转发端口状态:"
-        echo "---------------"
-        while IFS= read -r line; do
-            if [[ $line =~ listen[[:space:]]*=[[:space:]]*\"[^\"]*:([0-9]+)\" ]]; then
-                local port="${BASH_REMATCH[1]}"
-                if netstat -tuln | grep -q ":$port "; then
-                    echo -e "端口 $port: \033[0;32m正常监听\033[0m"
-                else
-                    echo -e "端口 $port: \033[0;31m未监听\033[0m"
-                fi
-            fi
-        done < "/root/realm/config.toml"
-    fi
     
     read -n 1 -s -r -p "按任意键继续..."
 }
 
-# 部署环境的函数
-deploy_realm() {
-    # 获取最新版本号
-    echo "正在获取最新版本信息..."
-    latest_version=$(curl -s https://api.github.com/repos/zhboner/realm/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-    
-    if [ -z "$latest_version" ]; then
-        echo "无法获取最新版本信息，请检查网络连接。"
-        read -n 1 -s -r -p "按任意键继续..."
-        return
-    fi
-    
-    echo "检测到最新版本：${latest_version}"
-    mkdir -p /root/realm
-    cd /root/realm
-    
-    echo "开始下载最新版本..."
-    wget -O realm.tar.gz "https://github.com/zhboner/realm/releases/download/${latest_version}/realm-x86_64-unknown-linux-gnu.tar.gz"
-    
-    if [ $? -ne 0 ]; then
-        echo "下载失败，请检查网络连接。"
-        read -n 1 -s -r -p "按任意键继续..."
-        return
-    fi
-    
-    echo "解压文件..."
-    tar -xvf realm.tar.gz
-    chmod +x realm
-    rm -f realm.tar.gz  # 清理下载的压缩包
-    
-    # 创建服务文件
-    echo "[Unit]
-Description=realm
-After=network-online.target
-Wants=network-online.target systemd-networkd-wait-online.service
-
-[Service]
-Type=simple
-User=root
-Restart=on-failure
-RestartSec=5s
-DynamicUser=true
-WorkingDirectory=/root/realm
-ExecStart=/root/realm/realm -c /root/realm/config.toml
-
-[Install]
-WantedBy=multi-user.target" > /etc/systemd/system/realm.service
-    
-    systemctl daemon-reload
-    # 设置开机自启动
-    systemctl enable realm
-    # 更新realm状态变量
-    realm_status="已安装"
-    realm_status_color="\033[0;32m" # 绿色
-    echo "部署完成。当前版本：${latest_version}"
-    read -n 1 -s -r -p "按任意键继续..."
-}
-
-# 验证IP地址格式
-validate_ip() {
-    local ip=$1
-    if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-        IFS='.' read -r -a ip_parts <<< "$ip"
-        for part in "${ip_parts[@]}"; do
-            if [ "$part" -gt 255 ] || [ "$part" -lt 0 ]; then
-                return 1
-            fi
-        done
-        return 0
-    fi
-    return 1
-}
-
-# 验证端口号
-validate_port() {
-    local port=$1
-    if [[ $port =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
-        return 0
-    fi
-    return 1
-}
-
-# 添加转发规则
+# 添加转发规则的函数
 add_forward() {
     if [ ! -d "/root/realm" ]; then
         echo "请先安装 realm（选项1）再添加转发规则。"
@@ -710,6 +763,46 @@ manage_autostart() {
             ;;
     esac
     read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 验证配置文件格式
+verify_config() {
+    local config_file="$1"
+    # 检查文件是否为空
+    if [ ! -s "$config_file" ]; then
+        return 1
+    fi
+    
+    # 检查基本的TOML格式（检查是否包含必要的字段）
+    if ! grep -q "^\[.*\]" "$config_file" || ! grep -q "^port.*=.*[0-9]" "$config_file"; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# 验证IP地址格式
+validate_ip() {
+    local ip=$1
+    if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        IFS='.' read -r -a ip_parts <<< "$ip"
+        for part in "${ip_parts[@]}"; do
+            if [ "$part" -gt 255 ] || [ "$part" -lt 0 ]; then
+                return 1
+            fi
+        done
+        return 0
+    fi
+    return 1
+}
+
+# 验证端口号
+validate_port() {
+    local port=$1
+    if [[ $port =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+        return 0
+    fi
+    return 1
 }
 
 # 显示菜单的函数
