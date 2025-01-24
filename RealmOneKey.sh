@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.4.8"
+VERSION="1.4.9"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -125,7 +125,7 @@ check_service_details() {
 # 部署realm的函数
 deploy_realm() {
     if [ -f "/root/realm/realm" ]; then
-        echo "检测到已安装realm，是否重新安装？”
+        echo "检测到已安装realm，是否重新安装？"
         read -p "输入 Y 确认重新安装，任意键取消: " confirm
         if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
             echo "取消安装。"
@@ -219,7 +219,7 @@ EOF
     # 清理下载文件
     rm -f realm-x86_64-unknown-linux-musl.tar.gz
     
-    echo -e "\n安装完成！”
+    echo -e "\n安装完成！"
     echo "=================="
     echo -e "Realm 版本: \033[0;32m$version\033[0m"
     echo -e "服务状态: \033[0;32m已启动\033[0m"
