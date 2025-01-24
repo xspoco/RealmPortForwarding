@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.3.4"
+VERSION="1.3.5"
 
 # 版本号比较函数
 compare_versions() {
@@ -62,14 +62,8 @@ check_realm_service_status() {
     
     # 检查服务状态
     if systemctl is-active --quiet realm; then
-        # 检查端口是否正在监听
-        if netstat -tuln | grep -q ":80\|:443"; then
-            echo -e "\033[0;32m运行中\033[0m"
-            return 0
-        else
-            echo -e "\033[0;33m运行中（端口未监听）\033[0m"
-            return 2
-        fi
+        echo -e "\033[0;32m运行中\033[0m"
+        return 0
     else
         echo -e "\033[0;31m未运行\033[0m"
         return 1
@@ -101,17 +95,6 @@ check_service_details() {
         echo -e "\033[0;32m已启用\033[0m"
     else
         echo -e "\033[0;31m未启用\033[0m"
-    fi
-    
-    # 检查端口状态
-    echo "端口状态:"
-    local ports=$(netstat -tuln | grep -E ":80|:443")
-    if [ -n "$ports" ]; then
-        echo "$ports" | while read -r line; do
-            echo -e "\033[0;32m$line\033[0m"
-        done
-    else
-        echo -e "\033[0;31m无端口监听\033[0m"
     fi
     
     # 显示资源使用情况
@@ -834,15 +817,13 @@ show_menu() {
     # 服务控制
     echo -e "${CYAN}${BOLD}服务控制${NC}"
     echo -e "  ${GREEN}5${NC}. 启动服务          ${GREEN}6${NC}. 停止服务"
-    echo -e "  ${GREEN}7${NC}. 重启服务"
-    echo -e "  ${GREEN}13${NC}. 启用开机自启      ${GREEN}14${NC}. 禁用开机自启"
+    echo -e "  ${GREEN}7${NC}. 重启服务          ${GREEN}8${NC}. 查看详细状态"
     echo
     
     # 系统管理
     echo -e "${CYAN}${BOLD}系统管理${NC}"
-    echo -e "  ${GREEN}8${NC}. 一键卸载          ${GREEN}9${NC}. 检查更新"
-    echo -e "  ${GREEN}10${NC}. 备份配置         ${GREEN}11${NC}. 恢复配置"
-    echo -e "  ${GREEN}12${NC}. 查看详细状态"
+    echo -e "  ${GREEN}9${NC}. 一键卸载          ${GREEN}10${NC}. 检查更新"
+    echo -e "  ${GREEN}11${NC}. 备份配置         ${GREEN}12${NC}. 恢复配置"
     echo
     
     # 退出选项
@@ -856,8 +837,7 @@ show_menu() {
 # 主循环
 while true; do
     show_menu
-    read -p "请选择一个选项: " choice
-
+    read -r choice
     case $choice in
         1)
             deploy_realm
@@ -881,25 +861,19 @@ while true; do
             restart_service
             ;;
         8)
-            uninstall_realm
-            ;;
-        9)
-            update_script
-            ;;
-        10)
-            backup_config
-            ;;
-        11)
-            backup_restore_config "restore"
-            ;;
-        12)
             check_service_details
             ;;
-        13)
-            manage_autostart "enable"
+        9)
+            uninstall_realm
             ;;
-        14)
-            manage_autostart "disable"
+        10)
+            update_script
+            ;;
+        11)
+            backup_config
+            ;;
+        12)
+            backup_restore_config "restore"
             ;;
         0)
             echo "感谢使用！"
