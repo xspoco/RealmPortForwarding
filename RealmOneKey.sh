@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.5.0"
+VERSION="1.5.1"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -114,12 +114,19 @@ check_service_details() {
     
     if ! systemctl is-active --quiet "$service_name"; then
         echo -e "\033[0;31m服务未运行\033[0m"
-        read -n 1 -s -r -p "按任意键继续..."
+        read -n 1 -s -r -p "按任意键继续... (q退出)" key
+        if [ "$key" = "q" ]; then
+            echo -e "\n退出查看"
+            return
+        fi
         return
     fi
 
     systemctl status "$service_name"
-    read -n 1 -s -r -p "按任意键继续..."
+    read -n 1 -s -r -p "按任意键继续... (q退出)" key
+    if [ "$key" = "q" ]; then
+        echo -e "\n退出查看"
+    fi
 }
 
 # 部署realm的函数
