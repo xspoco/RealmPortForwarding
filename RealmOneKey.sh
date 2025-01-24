@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.4.9"
+VERSION="1.5.0"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -69,7 +69,7 @@ fi
 # 获取realm版本的函数
 get_realm_version() {
     if [ -f "/root/realm/realm" ]; then
-        local version=$(/root/realm/realm -v 2>/dev/null | grep -oP 'realm \K[0-9]+\.[0-9]+\.[0-9]+' || echo "未知")
+        local version=$(/root/realm/realm -v 2>/dev/null | grep -oP '(?i)realm \K[0-9]+\.[0-9]+\.[0-9]+' || echo "未知")
         echo "$version"
     else
         echo "未安装"
