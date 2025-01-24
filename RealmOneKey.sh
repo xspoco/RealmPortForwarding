@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.5.1"
+VERSION="1.5.2"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -371,6 +371,28 @@ backup_restore_config() {
             ;;
     esac
     
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 启用realm开机启动
+enable_realm_autostart() {
+    echo "正在启用realm开机启动..."
+    if systemctl enable realm; then
+        echo -e "\033[0;32m已启用realm开机启动\033[0m"
+    else
+        echo -e "\033[0;31m启用失败，请检查服务状态或权限\033[0m"
+    fi
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 禁用realm开机启动
+disable_realm_autostart() {
+    echo "正在禁用realm开机启动..."
+    if systemctl disable realm; then
+        echo -e "\033[0;32m已禁用realm开机启动\033[0m"
+    else
+        echo -e "\033[0;31m禁用失败，请检查服务状态或权限\033[0m"
+    fi
     read -n 1 -s -r -p "按任意键继续..."
 }
 
@@ -979,6 +1001,7 @@ show_menu() {
     echo -e "${CYAN}${BOLD}系统管理${NC}"
     echo -e "  ${GREEN}9${NC}. 一键卸载          ${GREEN}10${NC}. 检查更新"
     echo -e "  ${GREEN}11${NC}. 备份配置         ${GREEN}12${NC}. 恢复配置"
+    echo -e "  ${GREEN}13${NC}. 其他选项"
     echo
     
     # 退出选项
@@ -1081,6 +1104,24 @@ while true; do
                 continue
             fi
             backup_restore_config "restore"
+            ;;
+        13)
+            echo -e "\n${CYAN}${BOLD}其他选项${NC}"
+            echo -e "  ${GREEN}1${NC}. 启用realm开机启动"
+            echo -e "  ${GREEN}2${NC}. 禁用realm开机启动"
+            echo -n -e "${YELLOW}请输入选项编号: ${NC}"
+            read -r sub_choice
+            case $sub_choice in
+                1)
+                    enable_realm_autostart
+                    ;;
+                2)
+                    disable_realm_autostart
+                    ;;
+                *)
+                    echo -e "\033[0;31m无效的选项\033[0m"
+                    ;;
+            esac
             ;;
         0)
             echo -e "${GREEN}感谢使用！${NC}"
