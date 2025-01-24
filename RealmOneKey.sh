@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.4.4"
+VERSION="1.4.7"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
