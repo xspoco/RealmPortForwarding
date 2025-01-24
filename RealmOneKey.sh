@@ -178,7 +178,7 @@ deploy_realm() {
     
     # 创建服务文件
     echo "正在创建服务文件..."
-    cat > /etc/systemd/system/realm.service << EOF
+    cat > /etc/systemd/system/realm.service << 'EOF'
 [Unit]
 Description=realm
 After=network.target
@@ -198,9 +198,11 @@ EOF
     # 创建基础配置文件（如果不存在）
     if [ ! -f "/root/realm/config.toml" ]; then
         echo "正在创建配置文件..."
-        echo "[network]
+        cat > /root/realm/config.toml << 'EOF'
+[network]
 no_tcp = false
-use_udp = true" > /root/realm/config.toml
+use_udp = true
+EOF
     fi
     
     # 重新加载systemd配置
