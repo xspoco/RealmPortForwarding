@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.4.2"
+VERSION="1.4.3"
 
 # 版本号比较函数
 compare_versions() {
@@ -760,85 +760,89 @@ update_script() {
     
     echo "正在从GitHub获取最新版本..."
     # 添加no-cache参数避免缓存，并输出详细信息
-    if curl -s -H "Cache-Control: no-cache" -o "$temp_file" "https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh?_=${timestamp}"; then
-        if [ -f "$temp_file" ]; then
-            if [ -s "$temp_file" ]; then
-                # 显示下载的文件内容中的版本号行
-                echo "远程文件版本号行："
-                grep "^VERSION=" "$temp_file"
-                
-                # 提取远程版本号
-                REMOTE_VERSION=$(grep "^VERSION=" "$temp_file" | cut -d'"' -f2)
-                
-                if [ -z "$REMOTE_VERSION" ]; then
-                    echo "无法获取远程版本号"
-                    echo "远程文件内容预览（前5行）："
-                    head -n 5 "$temp_file"
-                    rm -f "$temp_file"
-                    read -n 1 -s -r -p "按任意键继续..."
-                    return
-                fi
-                
-                echo "最新版本：$REMOTE_VERSION"
-                
-                # 使用版本比较函数
-                compare_versions "$VERSION" "$REMOTE_VERSION"
-                case $? in
-                    0) 
-                        echo "当前已是最新版本！"
-                        echo "如果你确定远程有更新，请尝试以下操作："
-                        echo "1. 等待几分钟后再试（GitHub可能需要时间更新缓存）"
-                        echo "2. 使用浏览器直接访问脚本地址检查版本"
-                        rm -f "$temp_file"
-                        read -n 1 -s -r -p "按任意键继续..."
-                        return
-                        ;;
-                    1)
-                        echo "当前版本比远程版本更新，可能是测试版本"
-                        read -p "是否仍要更新到远程版本？(Y/N): " confirm
-                        ;;
-                    2)
-                        echo "发现新版本"
-                        read -p "是否更新？(Y/N): " confirm
-                        ;;
-                esac
-                
-                if [[ $confirm != "Y" && $confirm != "y" ]]; then
-                    echo "取消更新"
-                    rm -f "$temp_file"
-                    read -n 1 -s -r -p "按任意键继续..."
-                    return
-                fi
-                
-                # 备份当前脚本和配置
-                echo "备份当前配置..."
-                if [ -f "$config_file" ]; then
-                    backup_config
-                fi
-                cp "$0" "$0.backup"
-                
-                # 替换当前脚本
-                mv "$temp_file" "$0"
-                chmod +x "$0"
-                
-                echo "脚本已更新完成！"
-                echo "正在重启脚本..."
-                exec "$0"
-            else
-                echo "更新失败：下载的文件为空"
-                rm -f "$temp_file"
-            fi
-        else
-            echo "更新失败：无法下载新版本"
-        fi
-    else
+    if ! curl -s -H "Cache-Control: no-cache" -o "$temp_file" "https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh?_=${timestamp}"; then
         echo "更新失败：无法连接到更新服务器"
         echo "curl错误代码：$?"
+        rm -f "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
     fi
     
-    # 清理临时文件
-    rm -f "$temp_file"
-    read -n 1 -s -r -p "按任意键继续..."
+    if [ ! -f "$temp_file" ] || [ ! -s "$temp_file" ]; then
+        echo "更新失败：下载的文件无效"
+        rm -f "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    # 显示下载的文件内容中的版本号行
+    echo "远程文件版本号行："
+    grep "^VERSION=" "$temp_file"
+    
+    # 提取远程版本号
+    REMOTE_VERSION=$(grep "^VERSION=" "$temp_file" | cut -d'"' -f2)
+    
+    if [ -z "$REMOTE_VERSION" ]; then
+        echo "无法获取远程版本号"
+        echo "远程文件内容预览（前5行）："
+        head -n 5 "$temp_file"
+        rm -f "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    echo "最新版本：$REMOTE_VERSION"
+    
+    # 使用版本比较函数
+    compare_versions "$VERSION" "$REMOTE_VERSION"
+    local compare_result=$?
+    
+    case $compare_result in
+        0) 
+            echo "当前已是最新版本！"
+            echo "如果你确定远程有更新，请尝试以下操作："
+            echo "1. 等待几分钟后再试（GitHub可能需要时间更新缓存）"
+            echo "2. 使用浏览器直接访问脚本地址检查版本"
+            rm -f "$temp_file"
+            read -n 1 -s -r -p "按任意键继续..."
+            return 0
+            ;;
+        1)
+            echo "当前版本比远程版本更新，可能是测试版本"
+            read -p "是否仍要更新到远程版本？(Y/N): " confirm
+            ;;
+        2)
+            echo "发现新版本"
+            read -p "是否更新？(Y/N): " confirm
+            ;;
+    esac
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "取消更新"
+        rm -f "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 0
+    fi
+    
+    # 备份当前脚本和配置
+    echo "备份当前配置..."
+    if [ -f "$config_file" ]; then
+        backup_config
+    fi
+    cp "$0" "${0}.backup"
+    
+    # 替换当前脚本
+    if ! mv "$temp_file" "$0"; then
+        echo "更新失败：无法替换脚本文件"
+        rm -f "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    chmod +x "$0"
+    echo "脚本已更新完成！"
+    echo "正在重启脚本..."
+    exec "$0"
 }
 
 # 管理开机自启动的函数
