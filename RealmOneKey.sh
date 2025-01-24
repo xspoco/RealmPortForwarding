@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.3.8"
+VERSION="1.3.9"
 
 # 版本号比较函数
 compare_versions() {
@@ -440,21 +440,21 @@ delete_forward() {
         return
     fi
     
-    # 备份配置文件
-    cp "/root/realm/config.toml" "/root/realm/config.toml.bak"
-
-    # 创建临时文件来存储规则
+    # 创建临时文件
     local temp_file=$(mktemp)
+    local rules_file=$(mktemp)
     local rules_count=0
     
     echo "当前转发规则："
     echo "=================="
     
-    # 使用 awk 提取并显示所有规则
-    rules_count=$(awk '
+    # 使用 awk 提取规则并保存到临时文件
+    awk '
     BEGIN { count = 0; }
     /\[\[endpoints\]\]/ { 
-        in_endpoint = 1; 
+        in_endpoint = 1;
+        listen = "";
+        remote = "";
         next;
     }
     in_endpoint && /listen *=/ {
@@ -467,77 +467,85 @@ delete_forward() {
         gsub(/"[[:space:]]*$/, "");
         remote = $0;
         count++;
-        printf "%d) 本地端口 %s -> %s\n", count, listen, remote;
+        print listen "\t" remote;
         in_endpoint = 0;
     }
     END {
-        if (count == 0) {
-            print "没有发现任何转发规则。";
-        }
         exit count;
-    }' "/root/realm/config.toml")
+    }' "/root/realm/config.toml" > "$rules_file"
+    
+    rules_count=$?
+    
+    if [ $rules_count -eq 0 ]; then
+        echo "没有发现任何转发规则。"
+        rm -f "$temp_file" "$rules_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    # 显示规则列表
+    local rule_number=1
+    while IFS=$'\t' read -r listen remote; do
+        echo "$rule_number) 本地端口 $listen -> $remote"
+        ((rule_number++))
+    done < "$rules_file"
     
     echo "=================="
     
-    if [ $rules_count -eq 0 ]; then
-        rm "$temp_file"
-        read -n 1 -s -r -p "按任意键继续..."
-        return
-    fi
-    
-    while true; do
+    # 获取用户输入
+    local valid_input=0
+    local choice
+    while [ $valid_input -eq 0 ]; do
         read -p "请输入要删除的规则编号 (1-$rules_count)，输入 0 取消: " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -le "$rules_count" ]; then
-            break
+        if [[ "$choice" =~ ^[0-9]+$ ]]; then
+            if [ $choice -ge 0 ] && [ $choice -le $rules_count ]; then
+                valid_input=1
+            else
+                echo "无效的选择，请输入 0-$rules_count 之间的数字。"
+            fi
         else
-            echo "无效的选择，请重新输入。"
+            echo "无效的输入，请输入数字。"
         fi
     done
     
-    if [ "$choice" -eq 0 ]; then
+    if [ $choice -eq 0 ]; then
         echo "取消删除操作。"
-        rm "$temp_file"
+        rm -f "$temp_file" "$rules_file"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
+    
+    # 备份配置文件
+    cp "/root/realm/config.toml" "/root/realm/config.toml.bak"
     
     # 创建新的配置文件
     echo "[network]
 no_tcp = false
 use_udp = true" > "$temp_file"
     
-    # 从原配置文件中提取规则
-    awk -v target="$choice" '
-    BEGIN { count = 0; }
-    /\[\[endpoints\]\]/ {
-        in_endpoint = 1;
-        buffer = "[[endpoints]]\n";
-        next;
-    }
-    in_endpoint {
-        buffer = buffer $0 "\n";
-        if ($0 ~ /remote *=/) {
-            count++;
-            if (count != target) {
-                printf "%s", buffer;
-            }
-            in_endpoint = 0;
-        }
-    }
-    !in_endpoint && !/\[network\]/ && !/no_tcp *=/ && !/use_udp *=/' "/root/realm/config.toml" >> "$temp_file"
+    # 重建配置文件，跳过要删除的规则
+    local current_rule=0
+    while IFS=$'\t' read -r listen remote; do
+        ((current_rule++))
+        if [ $current_rule -ne $choice ]; then
+            echo -e "\n[[endpoints]]
+listen = \"$listen\"
+remote = \"$remote\"" >> "$temp_file"
+        fi
+    done < "$rules_file"
     
     # 替换原配置文件
     if ! mv "$temp_file" "/root/realm/config.toml"; then
         echo -e "\033[0;31m错误：无法更新配置文件\033[0m"
         echo "正在恢复备份..."
         mv "/root/realm/config.toml.bak" "/root/realm/config.toml"
-        rm -f "$temp_file"
+        rm -f "$temp_file" "$rules_file"
         read -n 1 -s -r -p "按任意键继续..."
         return 1
     fi
     
-    # 删除备份文件
-    rm -f "/root/realm/config.toml.bak"
+    # 删除临时文件和备份
+    rm -f "$temp_file" "$rules_file" "/root/realm/config.toml.bak"
     
     echo -e "\033[0;32m规则已删除\033[0m"
     
