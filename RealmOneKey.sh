@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.2.0"
+VERSION="1.2.1"
 
 # 版本号比较函数
 compare_versions() {
@@ -510,18 +510,27 @@ update_script() {
     echo "正在检查更新..."
     echo "当前版本：$VERSION"
     
-    # 下载新版本脚本到临时文件进行版本检查
-    if curl -s -o /tmp/RealmOneKey.sh https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh; then
-        # 检查下载是否成功
-        if [ -f "/tmp/RealmOneKey.sh" ]; then
-            # 检查文件是否为空
-            if [ -s "/tmp/RealmOneKey.sh" ]; then
+    # 添加随机数以避免缓存
+    local timestamp=$(date +%s)
+    local temp_file="/tmp/RealmOneKey_${timestamp}.sh"
+    
+    echo "正在从GitHub获取最新版本..."
+    # 添加no-cache参数避免缓存，并输出详细信息
+    if curl -s -H "Cache-Control: no-cache" -o "$temp_file" "https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh?_=${timestamp}"; then
+        if [ -f "$temp_file" ]; then
+            if [ -s "$temp_file" ]; then
+                # 显示下载的文件内容中的版本号行
+                echo "远程文件版本号行："
+                grep "^VERSION=" "$temp_file"
+                
                 # 提取远程版本号
-                REMOTE_VERSION=$(grep "^VERSION=" /tmp/RealmOneKey.sh | cut -d'"' -f2)
+                REMOTE_VERSION=$(grep "^VERSION=" "$temp_file" | cut -d'"' -f2)
                 
                 if [ -z "$REMOTE_VERSION" ]; then
                     echo "无法获取远程版本号"
-                    rm -f /tmp/RealmOneKey.sh
+                    echo "远程文件内容预览（前5行）："
+                    head -n 5 "$temp_file"
+                    rm -f "$temp_file"
                     read -n 1 -s -r -p "按任意键继续..."
                     return
                 fi
@@ -533,7 +542,10 @@ update_script() {
                 case $? in
                     0) 
                         echo "当前已是最新版本！"
-                        rm -f /tmp/RealmOneKey.sh
+                        echo "如果你确定远程有更新，请尝试以下操作："
+                        echo "1. 等待几分钟后再试（GitHub可能需要时间更新缓存）"
+                        echo "2. 使用浏览器直接访问脚本地址检查版本"
+                        rm -f "$temp_file"
                         read -n 1 -s -r -p "按任意键继续..."
                         return
                         ;;
@@ -549,7 +561,7 @@ update_script() {
                 
                 if [[ $confirm != "Y" && $confirm != "y" ]]; then
                     echo "取消更新"
-                    rm -f /tmp/RealmOneKey.sh
+                    rm -f "$temp_file"
                     read -n 1 -s -r -p "按任意键继续..."
                     return
                 fi
@@ -558,7 +570,7 @@ update_script() {
                 cp "$0" "$0.backup"
                 
                 # 替换当前脚本
-                mv /tmp/RealmOneKey.sh "$0"
+                mv "$temp_file" "$0"
                 chmod +x "$0"
                 
                 echo "脚本已更新完成！"
@@ -566,15 +578,18 @@ update_script() {
                 exec "$0"
             else
                 echo "更新失败：下载的文件为空"
-                rm -f /tmp/RealmOneKey.sh
+                rm -f "$temp_file"
             fi
         else
             echo "更新失败：无法下载新版本"
         fi
     else
         echo "更新失败：无法连接到更新服务器"
+        echo "curl错误代码：$?"
     fi
     
+    # 清理临时文件
+    rm -f "$temp_file"
     read -n 1 -s -r -p "按任意键继续..."
 }
 
