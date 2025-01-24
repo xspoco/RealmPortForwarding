@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.2.4"
+VERSION="1.3.2"
 
 # 版本号比较函数
 compare_versions() {
@@ -59,6 +59,47 @@ check_realm_service_status() {
     else
         echo -e "\033[0;31m未启用\033[0m" # 红色
     fi
+}
+
+# 备份配置文件的函数
+backup_config() {
+    local backup_dir="/root/realm/backups"
+    local config_file="/root/realm/config.toml"
+    local max_backups=5
+    
+    # 检查配置文件是否存在
+    if [ ! -f "$config_file" ]; then
+        echo -e "\033[0;31m错误：未找到配置文件\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    }
+    
+    # 创建备份目录
+    mkdir -p "$backup_dir"
+    
+    # 生成备份文件名（带时间戳）
+    local timestamp=$(date +"%Y%m%d_%H%M%S")
+    local backup_file="$backup_dir/config_${timestamp}.toml"
+    
+    # 复制配置文件
+    cp "$config_file" "$backup_file"
+    
+    # 检查备份是否成功
+    if [ $? -eq 0 ]; then
+        echo -e "\033[0;32m配置文件已备份到：$backup_file\033[0m"
+        
+        # 限制备份文件数量
+        local backup_count=$(ls -1 "$backup_dir"/config_*.toml 2>/dev/null | wc -l)
+        if [ "$backup_count" -gt "$max_backups" ]; then
+            echo "清理旧备份文件..."
+            ls -t "$backup_dir"/config_*.toml | tail -n +$((max_backups + 1)) | xargs rm -f
+        fi
+    else
+        echo -e "\033[0;31m备份失败\033[0m"
+    fi
+    
+    read -n 1 -s -r -p "按任意键继续..."
+    return 0
 }
 
 # 配置文件备份和恢复函数
@@ -491,18 +532,59 @@ restart_service() {
 
 # 卸载realm的函数
 uninstall_realm() {
-    if systemctl is-active --quiet realm; then
-        systemctl stop realm
+    echo "准备卸载realm..."
+    read -p "确定要卸载realm吗？这将删除所有相关文件和配置(y/n): " confirm
+    if [[ $confirm != "y" && $confirm != "Y" ]]; then
+        echo "取消卸载"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
     fi
+
+    # 停止服务
+    echo "停止realm服务..."
+    systemctl stop realm 2>/dev/null
+    
+    # 禁用服务
+    echo "禁用realm服务..."
     systemctl disable realm 2>/dev/null
+    
+    # 删除服务文件
+    echo "删除服务文件..."
     rm -f /etc/systemd/system/realm.service
-    rm -rf /root/realm
     systemctl daemon-reload
-    # 更新realm状态变量
+    
+    # 删除realm程序和配置（包含备份）
+    echo "删除realm程序和配置文件..."
+    rm -rf /root/realm
+    
+    # 删除下载的脚本文件
+    echo "删除脚本文件..."
+    rm -f /tmp/RealmOneKey*.sh
+    
+    # 删除临时文件
+    echo "清理临时文件..."
+    rm -f /tmp/realm_*
+    rm -f /tmp/RealmOneKey_*.sh
+    
+    # 删除当前脚本
+    echo "删除当前脚本..."
+    local current_script="$0"
+    
+    # 更新状态变量（在脚本退出前）
     realm_status="未安装"
     realm_status_color="\033[0;31m" # 红色
-    echo "realm 已完全卸载"
-    read -n 1 -s -r -p "按任意键继续..."
+    
+    echo -e "\033[0;32m卸载完成！所有realm相关文件已清理干净\033[0m"
+    echo "系统将在3秒后退出..."
+    sleep 1
+    echo "2..."
+    sleep 1
+    echo "1..."
+    sleep 1
+    
+    # 使用新进程删除当前脚本并退出
+    (sleep 1; rm -f "$current_script") &
+    exit 0
 }
 
 # 更新脚本的函数
@@ -513,6 +595,7 @@ update_script() {
     # 添加随机数以避免缓存
     local timestamp=$(date +%s)
     local temp_file="/tmp/RealmOneKey_${timestamp}.sh"
+    local config_file="/root/realm/config.toml"
     
     echo "正在从GitHub获取最新版本..."
     # 添加no-cache参数避免缓存，并输出详细信息
@@ -566,7 +649,11 @@ update_script() {
                     return
                 fi
                 
-                # 备份当前脚本
+                # 备份当前脚本和配置
+                echo "备份当前配置..."
+                if [ -f "$config_file" ]; then
+                    backup_config
+                fi
                 cp "$0" "$0.backup"
                 
                 # 替换当前脚本
@@ -707,7 +794,7 @@ while true; do
             update_script
             ;;
         10)
-            backup_restore_config "backup"
+            backup_config
             ;;
         11)
             backup_restore_config "restore"
