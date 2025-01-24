@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.5.2"
+VERSION="1.5.3"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -1106,22 +1106,29 @@ while true; do
             backup_restore_config "restore"
             ;;
         13)
-            echo -e "\n${CYAN}${BOLD}其他选项${NC}"
-            echo -e "  ${GREEN}1${NC}. 启用realm开机启动"
-            echo -e "  ${GREEN}2${NC}. 禁用realm开机启动"
-            echo -n -e "${YELLOW}请输入选项编号: ${NC}"
-            read -r sub_choice
-            case $sub_choice in
-                1)
-                    enable_realm_autostart
-                    ;;
-                2)
-                    disable_realm_autostart
-                    ;;
-                *)
-                    echo -e "\033[0;31m无效的选项\033[0m"
-                    ;;
-            esac
+            while true; do
+                echo -e "\n${CYAN}${BOLD}其他选项${NC}"
+                echo -e "  ${GREEN}1${NC}. 启用realm开机启动"
+                echo -e "  ${GREEN}2${NC}. 禁用realm开机启动"
+                echo -e "  ${RED}q${NC}. 返回主菜单"
+                echo -n -e "${YELLOW}请输入选项编号: ${NC}"
+                read -r sub_choice
+                case $sub_choice in
+                    1)
+                        enable_realm_autostart
+                        ;;
+                    2)
+                        disable_realm_autostart
+                        ;;
+                    q)
+                        echo -e "\n返回主菜单"
+                        break
+                        ;;
+                    *)
+                        echo -e "\033[0;31m无效的选项\033[0m"
+                        ;;
+                esac
+            done
             ;;
         0)
             echo -e "${GREEN}感谢使用！${NC}"
