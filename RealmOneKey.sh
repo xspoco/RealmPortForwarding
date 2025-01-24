@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # 版本号比较函数
 compare_versions() {
@@ -214,6 +214,8 @@ ExecStart=/root/realm/realm -c /root/realm/config.toml
 WantedBy=multi-user.target" > /etc/systemd/system/realm.service
     
     systemctl daemon-reload
+    # 设置开机自启动
+    systemctl enable realm
     # 更新realm状态变量
     realm_status="已安装"
     realm_status_color="\033[0;32m" # 绿色
@@ -576,6 +578,38 @@ update_script() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
+# 管理开机自启动的函数
+manage_autostart() {
+    local action=$1
+    case $action in
+        "enable")
+            if systemctl is-enabled --quiet realm; then
+                echo -e "\033[0;33mrealm服务已经设置为开机自启动\033[0m"
+            else
+                systemctl enable realm
+                if [ $? -eq 0 ]; then
+                    echo -e "\033[0;32m已成功设置realm服务开机自启动\033[0m"
+                else
+                    echo -e "\033[0;31m设置开机自启动失败\033[0m"
+                fi
+            fi
+            ;;
+        "disable")
+            if ! systemctl is-enabled --quiet realm; then
+                echo -e "\033[0;33mrealm服务已经禁用开机自启动\033[0m"
+            else
+                systemctl disable realm
+                if [ $? -eq 0 ]; then
+                    echo -e "\033[0;32m已成功禁用realm服务开机自启动\033[0m"
+                else
+                    echo -e "\033[0;31m禁用开机自启动失败\033[0m"
+                fi
+            fi
+            ;;
+    esac
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
 # 显示菜单的函数
 show_menu() {
     clear
@@ -593,6 +627,8 @@ show_menu() {
     echo "10. 备份配置"
     echo "11. 恢复配置"
     echo "12. 查看详细状态"
+    echo "13. 启用realm开机自启"
+    echo "14. 禁用realm开机自启"
     echo "0. 退出脚本"
     echo "================="
     echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
@@ -641,6 +677,12 @@ while true; do
             ;;
         12)
             check_service_details
+            ;;
+        13)
+            manage_autostart "enable"
+            ;;
+        14)
+            manage_autostart "disable"
             ;;
         0)
             echo "感谢使用！"
