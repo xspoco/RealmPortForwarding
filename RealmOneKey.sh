@@ -1,38 +1,39 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.3.5"
+VERSION="1.3.6"
 
 # 版本号比较函数
 compare_versions() {
-    local ver1=$1
-    local ver2=$2
+    local version1=$1
+    local version2=$2
     
-    # 移除可能的'v'前缀
-    ver1=${ver1#v}
-    ver2=${ver2#v}
+    # 移除可能的 'v' 前缀
+    version1=${version1#v}
+    version2=${version2#v}
     
     # 将版本号分割为数组
-    IFS='.' read -ra VER1 <<< "$ver1"
-    IFS='.' read -ra VER2 <<< "$ver2"
+    IFS='.' read -ra ver1 <<< "$version1"
+    IFS='.' read -ra ver2 <<< "$version2"
+    
+    # 确保两个数组长度相同
+    while [ ${#ver1[@]} -lt ${#ver2[@]} ]; do
+        ver1+=("0")
+    done
+    while [ ${#ver2[@]} -lt ${#ver1[@]} ]; do
+        ver2+=("0")
+    done
     
     # 比较每个部分
-    for ((i=0; i<${#VER1[@]} && i<${#VER2[@]}; i++)); do
-        if ((10#${VER1[i]} > 10#${VER2[i]})); then
-            return 1  # ver1 大于 ver2
-        elif ((10#${VER1[i]} < 10#${VER2[i]})); then
-            return 2  # ver1 小于 ver2
+    for ((i=0; i<${#ver1[@]}; i++)); do
+        if [ "${ver1[i]}" -gt "${ver2[i]}" ]; then
+            return 1
+        elif [ "${ver1[i]}" -lt "${ver2[i]}" ]; then
+            return 2
         fi
     done
     
-    # 如果前面都相等，比较长度
-    if ((${#VER1[@]} > ${#VER2[@]})); then
-        return 1  # ver1 大于 ver2
-    elif ((${#VER1[@]} < ${#VER2[@]})); then
-        return 2  # ver1 小于 ver2
-    else
-        return 0  # 版本相等
-    fi
+    return 0
 }
 
 # 检查是否为root用户
