@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.3.6"
+VERSION="1.3.8"
 
 # 版本号比较函数
 compare_versions() {
@@ -402,36 +402,31 @@ show_forwards() {
     echo "当前所有转发规则："
     echo "=================="
     
-    # 使用更可靠的方式解析 TOML 文件
-    local in_endpoint=0
-    local listen=""
-    local remote=""
-    
-    while IFS= read -r line; do
-        # 去除行首尾的空白字符
-        line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
-        if [[ "$line" == "[[endpoints]]" ]]; then
-            in_endpoint=1
-            continue
-        fi
-        
-        if [ $in_endpoint -eq 1 ]; then
-            if [[ "$line" =~ ^listen[[:space:]]*=[[:space:]]*\"(.*)\"$ ]]; then
-                listen="${BASH_REMATCH[1]}"
-            elif [[ "$line" =~ ^remote[[:space:]]*=[[:space:]]*\"(.*)\"$ ]]; then
-                remote="${BASH_REMATCH[1]}"
-                echo "本地端口 $listen -> $remote"
-                listen=""
-                remote=""
-                in_endpoint=0
-            fi
-        fi
-    done < "/root/realm/config.toml"
-
-    if [ ! -s "/root/realm/config.toml" ] || ! grep -q "\[\[endpoints\]\]" "/root/realm/config.toml"; then
-        echo "没有发现任何转发规则。"
-    fi
+    # 使用 awk 提取并显示所有规则
+    awk '
+    BEGIN { rule_count = 0; }
+    /\[\[endpoints\]\]/ { 
+        in_endpoint = 1; 
+        next;
+    }
+    in_endpoint && /listen *=/ {
+        gsub(/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"/, "");
+        gsub(/"[[:space:]]*$/, "");
+        listen = $0;
+    }
+    in_endpoint && /remote *=/ {
+        gsub(/^[[:space:]]*remote[[:space:]]*=[[:space:]]*"/, "");
+        gsub(/"[[:space:]]*$/, "");
+        remote = $0;
+        rule_count++;
+        printf "%d) 本地端口 %s -> %s\n", rule_count, listen, remote;
+        in_endpoint = 0;
+    }
+    END {
+        if (rule_count == 0) {
+            print "没有发现任何转发规则。";
+        }
+    }' "/root/realm/config.toml"
     
     echo "=================="
     read -n 1 -s -r -p "按任意键继续..."
@@ -444,47 +439,55 @@ delete_forward() {
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
+    
+    # 备份配置文件
+    cp "/root/realm/config.toml" "/root/realm/config.toml.bak"
 
-    # 创建临时文件来存储规则和它们的行号
+    # 创建临时文件来存储规则
     local temp_file=$(mktemp)
-    local rule_count=0
+    local rules_count=0
     
     echo "当前转发规则："
     echo "=================="
     
-    # 使用awk提取并显示所有规则
-    awk '
-    /\[\[endpoints\]\]/ {in_endpoint=1; next}
-    in_endpoint && /listen =/ {
-        gsub(/.*"/, "");
-        gsub(/".*/, "");
-        listen=$0;
+    # 使用 awk 提取并显示所有规则
+    rules_count=$(awk '
+    BEGIN { count = 0; }
+    /\[\[endpoints\]\]/ { 
+        in_endpoint = 1; 
+        next;
     }
-    in_endpoint && /remote =/ {
-        gsub(/.*"/, "");
-        gsub(/".*/, "");
-        remote=$0;
-        rule_count++;
-        printf "%d) 本地端口 %s -> %s\n", rule_count, listen, remote;
-        in_endpoint=0;
-    }' /root/realm/config.toml > "$temp_file"
+    in_endpoint && /listen *=/ {
+        gsub(/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"/, "");
+        gsub(/"[[:space:]]*$/, "");
+        listen = $0;
+    }
+    in_endpoint && /remote *=/ {
+        gsub(/^[[:space:]]*remote[[:space:]]*=[[:space:]]*"/, "");
+        gsub(/"[[:space:]]*$/, "");
+        remote = $0;
+        count++;
+        printf "%d) 本地端口 %s -> %s\n", count, listen, remote;
+        in_endpoint = 0;
+    }
+    END {
+        if (count == 0) {
+            print "没有发现任何转发规则。";
+        }
+        exit count;
+    }' "/root/realm/config.toml")
     
-    if [ ! -s "$temp_file" ]; then
-        echo "没有找到任何转发规则。"
+    echo "=================="
+    
+    if [ $rules_count -eq 0 ]; then
         rm "$temp_file"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
     
-    cat "$temp_file"
-    echo "=================="
-    
-    # 获取规则总数
-    rule_count=$(wc -l < "$temp_file")
-    
     while true; do
-        read -p "请输入要删除的规则编号 (1-$rule_count)，输入 0 取消: " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -le "$rule_count" ]; then
+        read -p "请输入要删除的规则编号 (1-$rules_count)，输入 0 取消: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -le "$rules_count" ]; then
             break
         else
             echo "无效的选择，请重新输入。"
@@ -499,41 +502,52 @@ delete_forward() {
     fi
     
     # 创建新的配置文件
-    local new_config=$(mktemp)
     echo "[network]
 no_tcp = false
-use_udp = true" > "$new_config"
-    
-    # 计数器
-    local current_rule=0
+use_udp = true" > "$temp_file"
     
     # 从原配置文件中提取规则
     awk -v target="$choice" '
+    BEGIN { count = 0; }
     /\[\[endpoints\]\]/ {
-        in_endpoint=1;
-        buffer="[[endpoints]]\n";
+        in_endpoint = 1;
+        buffer = "[[endpoints]]\n";
         next;
     }
     in_endpoint {
         buffer = buffer $0 "\n";
-        if ($0 ~ /remote =/) {
-            current_rule++;
-            if (current_rule != target) {
+        if ($0 ~ /remote *=/) {
+            count++;
+            if (count != target) {
                 printf "%s", buffer;
             }
-            in_endpoint=0;
+            in_endpoint = 0;
         }
     }
-    !in_endpoint && !/\[network\]/ && !/no_tcp =/ && !/use_udp =/' /root/realm/config.toml >> "$new_config"
+    !in_endpoint && !/\[network\]/ && !/no_tcp *=/ && !/use_udp *=/' "/root/realm/config.toml" >> "$temp_file"
     
     # 替换原配置文件
-    mv "$new_config" /root/realm/config.toml
+    if ! mv "$temp_file" "/root/realm/config.toml"; then
+        echo -e "\033[0;31m错误：无法更新配置文件\033[0m"
+        echo "正在恢复备份..."
+        mv "/root/realm/config.toml.bak" "/root/realm/config.toml"
+        rm -f "$temp_file"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
     
-    echo "规则已删除。"
-    rm "$temp_file"
+    # 删除备份文件
+    rm -f "/root/realm/config.toml.bak"
+    
+    echo -e "\033[0;32m规则已删除\033[0m"
     
     # 重启服务以应用更改
-    systemctl restart realm
+    echo "正在重启服务以应用更改..."
+    if ! systemctl restart realm; then
+        echo -e "\033[0;31m警告：服务重启失败，请手动重启服务\033[0m"
+    else
+        echo -e "\033[0;32m服务已重启\033[0m"
+    fi
     
     read -n 1 -s -r -p "按任意键继续..."
 }
@@ -576,10 +590,34 @@ uninstall_realm() {
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
+    
+    # 备份配置文件
+    if [ -f "/root/realm/config.toml" ]; then
+        echo "备份当前配置..."
+        backup_config
+    fi
 
     # 停止服务
     echo "停止realm服务..."
     systemctl stop realm 2>/dev/null
+    
+    # 等待服务完全停止
+    echo "等待服务停止..."
+    local count=0
+    while systemctl is-active --quiet realm && [ $count -lt 10 ]; do
+        sleep 1
+        ((count++))
+    done
+    
+    if systemctl is-active --quiet realm; then
+        echo -e "\033[0;31m警告：服务无法完全停止\033[0m"
+        read -p "是否强制继续卸载？(y/n): " force
+        if [[ $force != "y" && $force != "Y" ]]; then
+            echo "取消卸载"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+    fi
     
     # 禁用服务
     echo "禁用realm服务..."
@@ -590,9 +628,15 @@ uninstall_realm() {
     rm -f /etc/systemd/system/realm.service
     systemctl daemon-reload
     
-    # 删除realm程序和配置（包含备份）
+    # 删除realm程序和配置（保留备份）
     echo "删除realm程序和配置文件..."
+    if [ -d "/root/realm/backups" ]; then
+        mv "/root/realm/backups" "/root/realm_backups"
+    fi
     rm -rf /root/realm
+    if [ -d "/root/realm_backups" ]; then
+        mv "/root/realm_backups" "/root/realm/backups"
+    fi
     
     # 删除下载的脚本文件
     echo "删除脚本文件..."
@@ -603,25 +647,16 @@ uninstall_realm() {
     rm -f /tmp/realm_*
     rm -f /tmp/RealmOneKey_*.sh
     
-    # 删除当前脚本
-    echo "删除当前脚本..."
-    local current_script="$0"
-    
-    # 更新状态变量（在脚本退出前）
+    # 更新状态变量
     realm_status="未安装"
     realm_status_color="\033[0;31m" # 红色
     
-    echo -e "\033[0;32m卸载完成！所有realm相关文件已清理干净\033[0m"
-    echo "系统将在3秒后退出..."
-    sleep 1
-    echo "2..."
-    sleep 1
-    echo "1..."
-    sleep 1
+    echo -e "\033[0;32m卸载完成！\033[0m"
+    if [ -d "/root/realm/backups" ]; then
+        echo "配置备份保留在：/root/realm/backups"
+    fi
     
-    # 使用新进程删除当前脚本并退出
-    (sleep 1; rm -f "$current_script") &
-    exit 0
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 更新脚本的函数
