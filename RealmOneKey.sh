@@ -39,6 +39,7 @@ show_menu() {
     echo "6. 停止服务"
     echo "7. 重启服务"
     echo "8. 一键卸载"
+    echo "9. 检查更新"
     echo "0. 退出脚本"
     echo "================="
     echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
@@ -179,6 +180,13 @@ remote = \"$remote_ip:$remote_port\"" >> /root/realm/config.toml
         read -p "是否继续添加转发规则(Y/N)? " answer
         if [[ $answer != "Y" && $answer != "y" ]]; then
             echo "转发规则添加完成。"
+            echo "正在重启realm服务以应用新的转发规则..."
+            systemctl restart realm
+            if systemctl is-active --quiet realm; then
+                echo -e "\033[0;32m服务重启成功，转发规则已生效\033[0m"
+            else
+                echo -e "\033[0;31m服务重启失败，请检查配置或手动重启服务\033[0m"
+            fi
             read -n 1 -s -r -p "按任意键继续..."
             break
         fi
@@ -377,10 +385,45 @@ uninstall_realm() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
+# 更新脚本的函数
+update_script() {
+    echo "正在检查更新..."
+    
+    # 下载新版本脚本到临时文件
+    if curl -s -o /tmp/RealmOneKey.sh https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh; then
+        # 检查下载是否成功
+        if [ -f "/tmp/RealmOneKey.sh" ]; then
+            # 检查文件是否为空
+            if [ -s "/tmp/RealmOneKey.sh" ]; then
+                # 备份当前脚本
+                cp "$0" "$0.backup"
+                
+                # 替换当前脚本
+                mv /tmp/RealmOneKey.sh "$0"
+                chmod +x "$0"
+                
+                echo "脚本已更新完成！"
+                echo "正在重启脚本..."
+                exec "$0"
+            else
+                echo "更新失败：下载的文件为空"
+                rm -f /tmp/RealmOneKey.sh
+            fi
+        else
+            echo "更新失败：无法下载新版本"
+        fi
+    else
+        echo "更新失败：无法连接到更新服务器"
+    fi
+    
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
 # 主循环
 while true; do
     show_menu
     read -p "请选择一个选项: " choice
+
     case $choice in
         1)
             deploy_realm
@@ -405,6 +448,9 @@ while true; do
             ;;
         8)
             uninstall_realm
+            ;;
+        9)
+            update_script
             ;;
         0)
             echo "感谢使用，再见！"
