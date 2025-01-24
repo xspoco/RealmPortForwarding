@@ -37,7 +37,8 @@ show_menu() {
     echo "4. 删除转发"
     echo "5. 启动服务"
     echo "6. 停止服务"
-    echo "7. 一键卸载"
+    echo "7. 重启服务"
+    echo "8. 一键卸载"
     echo "0. 退出脚本"
     echo "================="
     echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
@@ -230,7 +231,6 @@ show_forwards() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
-
 # 删除转发规则的函数
 delete_forward() {
     if [ ! -f "/root/realm/config.toml" ]; then
@@ -354,6 +354,13 @@ stop_service() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
+# 重启服务的函数
+restart_service() {
+    systemctl restart realm
+    echo "realm 服务已重启"
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
 # 卸载realm的函数
 uninstall_realm() {
     if systemctl is-active --quiet realm; then
@@ -394,6 +401,9 @@ while true; do
             stop_service
             ;;
         7)
+            restart_service
+            ;;
+        8)
             uninstall_realm
             ;;
         0)
