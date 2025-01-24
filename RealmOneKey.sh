@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.2.3"
+VERSION="1.2.4"
 
 # 版本号比较函数
 compare_versions() {
@@ -628,70 +628,49 @@ manage_autostart() {
 # 显示菜单的函数
 show_menu() {
     clear
-    local BLUE="\033[0;34m"
     local GREEN="\033[0;32m"
     local YELLOW="\033[1;33m"
     local RED="\033[0;31m"
     local CYAN="\033[0;36m"
     local NC="\033[0m" # No Color
     local BOLD="\033[1m"
+    local UNDERLINE="\033[4m"
     
-    # 定义边框字符
-    local TOP_LEFT="┌"
-    local TOP_RIGHT="┐"
-    local BOTTOM_LEFT="└"
-    local BOTTOM_RIGHT="┘"
-    local HORIZONTAL="─"
-    local VERTICAL="│"
-    local LEFT_T="├"
-    local RIGHT_T="┤"
+    # 标题
+    echo -e "\n${YELLOW}${BOLD}Realm 一键转发脚本 ${NC}${YELLOW}v${VERSION}${NC}\n"
     
-    # 计算宽度
-    local WIDTH=48
-    local HORIZONTAL_LINE=$(printf "%${WIDTH}s" | tr " " "${HORIZONTAL}")
+    # 状态栏
+    echo -e "${UNDERLINE}系统状态${NC}"
+    echo -e "  运行状态: ${realm_status_color}${realm_status}${NC}"
+    echo -e "  转发状态: $(check_realm_service_status)"
+    echo
     
-    # 顶部边框
-    echo -e "${BLUE}${TOP_LEFT}${HORIZONTAL_LINE}${TOP_RIGHT}${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "${YELLOW}${BOLD}     欢迎使用 Realm 一键转发脚本 v${VERSION}     ${NC}"
-    echo -e "${BLUE}${LEFT_T}${HORIZONTAL_LINE}${RIGHT_T}${NC}"
+    # 基础功能
+    echo -e "${CYAN}${BOLD}基础功能${NC}"
+    echo -e "  ${GREEN}1${NC}. 部署环境          ${GREEN}2${NC}. 添加转发"
+    echo -e "  ${GREEN}3${NC}. 查看转发规则      ${GREEN}4${NC}. 删除转发"
+    echo
     
-    # 基础功能区
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "${CYAN}基础功能：${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}1${NC}. 部署环境"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}2${NC}. 添加转发"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}3${NC}. 查看已添加的转发规则"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}4${NC}. 删除转发"
+    # 服务控制
+    echo -e "${CYAN}${BOLD}服务控制${NC}"
+    echo -e "  ${GREEN}5${NC}. 启动服务          ${GREEN}6${NC}. 停止服务"
+    echo -e "  ${GREEN}7${NC}. 重启服务"
+    echo -e "  ${GREEN}13${NC}. 启用开机自启      ${GREEN}14${NC}. 禁用开机自启"
+    echo
     
-    # 服务控制区
-    echo -e "${BLUE}${LEFT_T}${HORIZONTAL_LINE}${RIGHT_T}${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "${CYAN}服务控制：${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}5${NC}. 启动服务"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}6${NC}. 停止服务"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}7${NC}. 重启服务"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}13${NC}. 启用realm开机自启"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}14${NC}. 禁用realm开机自启"
+    # 系统管理
+    echo -e "${CYAN}${BOLD}系统管理${NC}"
+    echo -e "  ${GREEN}8${NC}. 一键卸载          ${GREEN}9${NC}. 检查更新"
+    echo -e "  ${GREEN}10${NC}. 备份配置         ${GREEN}11${NC}. 恢复配置"
+    echo -e "  ${GREEN}12${NC}. 查看详细状态"
+    echo
     
-    # 系统管理区
-    echo -e "${BLUE}${LEFT_T}${HORIZONTAL_LINE}${RIGHT_T}${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "${CYAN}系统管理：${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}8${NC}. 一键卸载"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}9${NC}. 检查更新"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}10${NC}. 备份配置"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}11${NC}. 恢复配置"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${GREEN}12${NC}. 查看详细状态"
+    # 退出选项
+    echo -e "  ${RED}0${NC}. 退出脚本"
+    echo
     
-    # 底部选项
-    echo -e "${BLUE}${LEFT_T}${HORIZONTAL_LINE}${RIGHT_T}${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "  ${RED}0${NC}. 退出脚本"
-    
-    # 状态显示
-    echo -e "${BLUE}${LEFT_T}${HORIZONTAL_LINE}${RIGHT_T}${NC}"
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "Realm 状态：${realm_status_color}${realm_status}${NC}"
-    local forwarding_status=$(check_realm_service_status)
-    printf "${BLUE}${VERTICAL}${NC} %-$((WIDTH-2))s ${BLUE}${VERTICAL}${NC}\n" "转发状态：${forwarding_status}"
-    echo -e "${BLUE}${BOTTOM_LEFT}${HORIZONTAL_LINE}${BOTTOM_RIGHT}${NC}"
-    
-    echo -e "\n${YELLOW}请输入选项编号：${NC}"
+    # 输入提示
+    echo -e "${YELLOW}请输入选项编号: ${NC}"
 }
 
 # 主循环
