@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 当前脚本版本号
+VERSION="1.0.0"
+
 # 检查是否为root用户
 if [ "$EUID" -ne 0 ]; then
     echo "此脚本需要root权限才能运行，可以使用 'su -' 切换到root用户再运行。"
@@ -43,6 +46,7 @@ show_menu() {
     echo "0. 退出脚本"
     echo "================="
     echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
+    echo -e "当前版本：$VERSION"
     echo -n "realm 转发状态："
     check_realm_service_status
 }
@@ -388,13 +392,43 @@ uninstall_realm() {
 # 更新脚本的函数
 update_script() {
     echo "正在检查更新..."
+    echo "当前版本：$VERSION"
     
-    # 下载新版本脚本到临时文件
+    # 下载新版本脚本到临时文件进行版本检查
     if curl -s -o /tmp/RealmOneKey.sh https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh; then
         # 检查下载是否成功
         if [ -f "/tmp/RealmOneKey.sh" ]; then
             # 检查文件是否为空
             if [ -s "/tmp/RealmOneKey.sh" ]; then
+                # 提取远程版本号
+                REMOTE_VERSION=$(grep "^VERSION=" /tmp/RealmOneKey.sh | cut -d'"' -f2)
+                
+                if [ -z "$REMOTE_VERSION" ]; then
+                    echo "无法获取远程版本号"
+                    rm -f /tmp/RealmOneKey.sh
+                    read -n 1 -s -r -p "按任意键继续..."
+                    return
+                fi
+                
+                echo "最新版本：$REMOTE_VERSION"
+                
+                # 比较版本号
+                if [ "$VERSION" = "$REMOTE_VERSION" ]; then
+                    echo "当前已是最新版本！"
+                    rm -f /tmp/RealmOneKey.sh
+                    read -n 1 -s -r -p "按任意键继续..."
+                    return
+                fi
+                
+                # 提示用户是否更新
+                read -p "发现新版本，是否更新？(Y/N): " confirm
+                if [[ $confirm != "Y" && $confirm != "y" ]]; then
+                    echo "取消更新"
+                    rm -f /tmp/RealmOneKey.sh
+                    read -n 1 -s -r -p "按任意键继续..."
+                    return
+                fi
+                
                 # 备份当前脚本
                 cp "$0" "$0.backup"
                 
