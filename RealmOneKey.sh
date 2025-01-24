@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.4.7"
+VERSION="1.4.8"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -358,6 +358,9 @@ backup_restore_config() {
             else
                 echo -e "\033[0;31m恢复失败\033[0m"
             fi
+            ;;
+        *)
+            echo -e "\033[0;31m无效的操作\033[0m"
             ;;
     esac
     
