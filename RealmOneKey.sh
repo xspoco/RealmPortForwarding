@@ -32,7 +32,7 @@ check_realm_service_status() {
 # 显示菜单的函数
 show_menu() {
     clear
-    echo "欢迎使用realm一键转发脚本"
+    echo -e "欢迎使用realm一键转发脚本 v$VERSION"
     echo "================="
     echo "1. 部署环境"
     echo "2. 添加转发"
@@ -46,7 +46,6 @@ show_menu() {
     echo "0. 退出脚本"
     echo "================="
     echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
-    echo -e "当前版本：$VERSION"
     echo -n "realm 转发状态："
     check_realm_service_status
 }
