@@ -1,7 +1,39 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.0.0"
+VERSION="1.1.0"
+
+# 版本号比较函数
+compare_versions() {
+    local ver1=$1
+    local ver2=$2
+    
+    # 移除可能的'v'前缀
+    ver1=${ver1#v}
+    ver2=${ver2#v}
+    
+    # 将版本号分割为数组
+    IFS='.' read -ra VER1 <<< "$ver1"
+    IFS='.' read -ra VER2 <<< "$ver2"
+    
+    # 比较每个部分
+    for ((i=0; i<${#VER1[@]} && i<${#VER2[@]}; i++)); do
+        if ((10#${VER1[i]} > 10#${VER2[i]})); then
+            return 1  # ver1 大于 ver2
+        elif ((10#${VER1[i]} < 10#${VER2[i]})); then
+            return 2  # ver1 小于 ver2
+        fi
+    done
+    
+    # 如果前面都相等，比较长度
+    if ((${#VER1[@]} > ${#VER2[@]})); then
+        return 1  # ver1 大于 ver2
+    elif ((${#VER1[@]} < ${#VER2[@]})); then
+        return 2  # ver1 小于 ver2
+    else
+        return 0  # 版本相等
+    fi
+}
 
 # 检查是否为root用户
 if [ "$EUID" -ne 0 ]; then
@@ -29,25 +61,108 @@ check_realm_service_status() {
     fi
 }
 
-# 显示菜单的函数
-show_menu() {
-    clear
-    echo -e "欢迎使用realm一键转发脚本 v$VERSION"
-    echo "================="
-    echo "1. 部署环境"
-    echo "2. 添加转发"
-    echo "3. 查看已添加的转发规则"
-    echo "4. 删除转发"
-    echo "5. 启动服务"
-    echo "6. 停止服务"
-    echo "7. 重启服务"
-    echo "8. 一键卸载"
-    echo "9. 检查更新"
-    echo "0. 退出脚本"
-    echo "================="
-    echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
-    echo -n "realm 转发状态："
-    check_realm_service_status
+# 配置文件备份和恢复函数
+backup_restore_config() {
+    local action=$1
+    local backup_dir="/root/realm/backups"
+    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    
+    case $action in
+        "backup")
+            # 创建备份目录
+            mkdir -p "$backup_dir"
+            if [ -f "/root/realm/config.toml" ]; then
+                cp "/root/realm/config.toml" "$backup_dir/config_$timestamp.toml"
+                echo "配置已备份到: $backup_dir/config_$timestamp.toml"
+            else
+                echo "没有找到配置文件，无法备份"
+            fi
+            ;;
+        "restore")
+            # 列出所有备份
+            if [ ! -d "$backup_dir" ] || [ -z "$(ls -A "$backup_dir")" ]; then
+                echo "没有找到任何备份文件"
+                return
+            fi
+            
+            echo "可用的备份文件："
+            local i=1
+            local backups=()
+            while IFS= read -r file; do
+                echo "$i) $(basename "$file") ($(date -r "$file" '+%Y-%m-%d %H:%M:%S'))"
+                backups+=("$file")
+                ((i++))
+            done < <(ls -t "$backup_dir"/config_*.toml 2>/dev/null)
+            
+            read -p "请选择要恢复的备份编号 (0 取消): " choice
+            if [ "$choice" -gt 0 ] && [ "$choice" -le "${#backups[@]}" ]; then
+                cp "${backups[choice-1]}" "/root/realm/config.toml"
+                echo "配置已恢复"
+                systemctl restart realm
+                echo "服务已重启"
+            else
+                echo "取消恢复操作"
+            fi
+            ;;
+    esac
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 检查服务状态详细信息
+check_service_details() {
+    # 检查服务是否正在运行
+    local is_active=$(systemctl is-active realm)
+    local is_enabled=$(systemctl is-enabled realm 2>/dev/null)
+    local service_pid=$(systemctl show -p MainPID realm | cut -d'=' -f2)
+    local mem_usage=""
+    local cpu_usage=""
+    
+    echo "Realm 服务状态:"
+    echo "---------------"
+    echo -n "运行状态: "
+    if [ "$is_active" = "active" ]; then
+        echo -e "\033[0;32m运行中\033[0m"
+        # 获取内存和CPU使用情况
+        if [ "$service_pid" -gt 0 ]; then
+            mem_usage=$(ps -o rss= -p "$service_pid" 2>/dev/null)
+            if [ ! -z "$mem_usage" ]; then
+                mem_usage=$(awk "BEGIN {printf \"%.2f\", $mem_usage/1024}")
+                echo "内存使用: ${mem_usage}MB"
+            fi
+            
+            cpu_usage=$(ps -o %cpu= -p "$service_pid" 2>/dev/null)
+            if [ ! -z "$cpu_usage" ]; then
+                echo "CPU使用率: ${cpu_usage}%"
+            fi
+        fi
+    else
+        echo -e "\033[0;31m未运行\033[0m"
+    fi
+    
+    echo -n "开机启动: "
+    if [ "$is_enabled" = "enabled" ]; then
+        echo -e "\033[0;32m是\033[0m"
+    else
+        echo -e "\033[0;31m否\033[0m"
+    fi
+    
+    # 检查端口占用
+    if [ "$is_active" = "active" ]; then
+        echo -e "\n当前转发端口状态:"
+        echo "---------------"
+        while IFS= read -r line; do
+            if [[ $line =~ listen[[:space:]]*=[[:space:]]*\"[^\"]*:([0-9]+)\" ]]; then
+                local port="${BASH_REMATCH[1]}"
+                if netstat -tuln | grep -q ":$port "; then
+                    echo -e "端口 $port: \033[0;32m正常监听\033[0m"
+                else
+                    echo -e "端口 $port: \033[0;31m未监听\033[0m"
+                fi
+            fi
+        done < "/root/realm/config.toml"
+    fi
+    
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 部署环境的函数
@@ -411,16 +526,25 @@ update_script() {
                 
                 echo "最新版本：$REMOTE_VERSION"
                 
-                # 比较版本号
-                if [ "$VERSION" = "$REMOTE_VERSION" ]; then
-                    echo "当前已是最新版本！"
-                    rm -f /tmp/RealmOneKey.sh
-                    read -n 1 -s -r -p "按任意键继续..."
-                    return
-                fi
+                # 使用版本比较函数
+                compare_versions "$VERSION" "$REMOTE_VERSION"
+                case $? in
+                    0) 
+                        echo "当前已是最新版本！"
+                        rm -f /tmp/RealmOneKey.sh
+                        read -n 1 -s -r -p "按任意键继续..."
+                        return
+                        ;;
+                    1)
+                        echo "当前版本比远程版本更新，可能是测试版本"
+                        read -p "是否仍要更新到远程版本？(Y/N): " confirm
+                        ;;
+                    2)
+                        echo "发现新版本"
+                        read -p "是否更新？(Y/N): " confirm
+                        ;;
+                esac
                 
-                # 提示用户是否更新
-                read -p "发现新版本，是否更新？(Y/N): " confirm
                 if [[ $confirm != "Y" && $confirm != "y" ]]; then
                     echo "取消更新"
                     rm -f /tmp/RealmOneKey.sh
@@ -450,6 +574,30 @@ update_script() {
     fi
     
     read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 显示菜单的函数
+show_menu() {
+    clear
+    echo -e "欢迎使用realm一键转发脚本 v$VERSION"
+    echo "================="
+    echo "1. 部署环境"
+    echo "2. 添加转发"
+    echo "3. 查看已添加的转发规则"
+    echo "4. 删除转发"
+    echo "5. 启动服务"
+    echo "6. 停止服务"
+    echo "7. 重启服务"
+    echo "8. 一键卸载"
+    echo "9. 检查更新"
+    echo "10. 备份配置"
+    echo "11. 恢复配置"
+    echo "12. 查看详细状态"
+    echo "0. 退出脚本"
+    echo "================="
+    echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
+    echo -n "realm 转发状态："
+    check_realm_service_status
 }
 
 # 主循环
@@ -485,12 +633,22 @@ while true; do
         9)
             update_script
             ;;
+        10)
+            backup_restore_config "backup"
+            ;;
+        11)
+            backup_restore_config "restore"
+            ;;
+        12)
+            check_service_details
+            ;;
         0)
-            echo "感谢使用，再见！"
+            echo "感谢使用！"
             exit 0
             ;;
         *)
-            echo "无效选项: $choice"
+            echo "无效的选项，请重新选择"
+            read -n 1 -s -r -p "按任意键继续..."
             ;;
     esac
 done
