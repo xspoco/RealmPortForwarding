@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.3.9"
+VERSION="1.4.0"
 
 # 版本号比较函数
 compare_versions() {
@@ -327,68 +327,125 @@ backup_restore_config() {
 
 # 添加转发规则的函数
 add_forward() {
-    if [ ! -d "/root/realm" ]; then
-        echo "请先安装 realm（选项1）再添加转发规则。"
+    echo -e "\n添加转发规则 (在任意步骤输入 q 可退出)"
+    echo "=================="
+    
+    # 获取本地监听地址
+    local listen_addr
+    while true; do
+        read -p "请输入本地监听地址 (默认 0.0.0.0，输入 q 退出): " listen_addr
+        if [ "$listen_addr" = "q" ]; then
+            echo "取消添加转发规则。"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+        
+        if [ -z "$listen_addr" ]; then
+            listen_addr="0.0.0.0"
+            break
+        elif validate_ip "$listen_addr"; then
+            break
+        else
+            echo -e "\033[0;31m无效的IP地址格式\033[0m"
+        fi
+    done
+    
+    # 获取本地端口
+    local listen_port
+    while true; do
+        read -p "请输入本地端口 (1-65535，输入 q 退出): " listen_port
+        if [ "$listen_port" = "q" ]; then
+            echo "取消添加转发规则。"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+        
+        if validate_port "$listen_port"; then
+            break
+        else
+            echo -e "\033[0;31m无效的端口号，请输入 1-65535 之间的数字\033[0m"
+        fi
+    done
+    
+    # 获取远程地址
+    local remote_addr
+    while true; do
+        read -p "请输入远程地址 (输入 q 退出): " remote_addr
+        if [ "$remote_addr" = "q" ]; then
+            echo "取消添加转发规则。"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+        
+        if validate_ip "$remote_addr"; then
+            break
+        else
+            echo -e "\033[0;31m无效的IP地址格式\033[0m"
+        fi
+    done
+    
+    # 获取远程端口
+    local remote_port
+    while true; do
+        read -p "请输入远程端口 (1-65535，输入 q 退出): " remote_port
+        if [ "$remote_port" = "q" ]; then
+            echo "取消添加转发规则。"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+        
+        if validate_port "$remote_port"; then
+            break
+        else
+            echo -e "\033[0;31m无效的端口号，请输入 1-65535 之间的数字\033[0m"
+        fi
+    done
+    
+    # 确认添加
+    echo -e "\n即将添加以下转发规则："
+    echo "本地 $listen_addr:$listen_port -> 远程 $remote_addr:$remote_port"
+    read -p "确认添加？(y/n): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "取消添加转发规则。"
         read -n 1 -s -r -p "按任意键继续..."
         return
     fi
-
-    if [ ! -f "/root/realm/config.toml" ]; then
-        mkdir -p /root/realm
+    
+    # 备份配置文件
+    if [ -f "/root/realm/config.toml" ]; then
+        cp "/root/realm/config.toml" "/root/realm/config.toml.bak"
+    else
+        # 如果配置文件不存在，创建基本配置
         echo "[network]
 no_tcp = false
-use_udp = true" > /root/realm/config.toml
+use_udp = true" > "/root/realm/config.toml"
     fi
-
-    while true; do
-        while true; do
-            read -p "请输入本地监听端口 (1-65535): " local_port
-            if validate_port "$local_port"; then
-                break
-            else
-                echo "错误：无效的端口号。端口号必须在 1-65535 之间。"
-            fi
-        done
-
-        while true; do
-            read -p "请输入目标IP地址: " remote_ip
-            if validate_ip "$remote_ip"; then
-                break
-            else
-                echo "错误：无效的IP地址格式。"
-            fi
-        done
-
-        while true; do
-            read -p "请输入目标端口 (1-65535): " remote_port
-            if validate_port "$remote_port"; then
-                break
-            else
-                echo "错误：无效的端口号。端口号必须在 1-65535 之间。"
-            fi
-        done
-
-        echo -e "\n[[endpoints]]
-listen = \"0.0.0.0:$local_port\"
-remote = \"$remote_ip:$remote_port\"" >> /root/realm/config.toml
-
-        echo "已添加转发规则："
-        echo "本地端口 $local_port -> $remote_ip:$remote_port"
+    
+    # 添加新的转发规则
+    echo -e "\n[[endpoints]]
+listen = \"$listen_addr:$listen_port\"
+remote = \"$remote_addr:$remote_port\"" >> "/root/realm/config.toml"
+    
+    if [ $? -eq 0 ]; then
+        echo -e "\033[0;32m转发规则添加成功\033[0m"
         
-        read -p "是否继续添加转发规则(Y/N)? " answer
-        if [[ $answer != "Y" && $answer != "y" ]]; then
-            echo "转发规则添加完成。"
-            echo "正在重启realm服务以应用新的转发规则..."
-            systemctl restart realm
-            if systemctl is-active --quiet realm; then
-                echo -e "\033[0;32m服务重启成功，转发规则已生效\033[0m"
-            else
-                echo -e "\033[0;31m服务重启失败，请检查配置或手动重启服务\033[0m"
-            fi
-            read -n 1 -s -r -p "按任意键继续..."
-            break
+        # 重启服务以应用更改
+        echo "正在重启服务以应用更改..."
+        if ! systemctl restart realm; then
+            echo -e "\033[0;31m警告：服务重启失败，请手动重启服务\033[0m"
+        else
+            echo -e "\033[0;32m服务已重启\033[0m"
+            rm -f "/root/realm/config.toml.bak"
         fi
-    done
+    else
+        echo -e "\033[0;31m错误：无法添加转发规则\033[0m"
+        if [ -f "/root/realm/config.toml.bak" ]; then
+            echo "正在恢复备份..."
+            mv "/root/realm/config.toml.bak" "/root/realm/config.toml"
+        fi
+    fi
+    
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 查看转发规则的函数
