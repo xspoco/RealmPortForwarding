@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.2.1"
+VERSION="1.2.2"
 
 # 版本号比较函数
 compare_versions() {
@@ -628,27 +628,55 @@ manage_autostart() {
 # 显示菜单的函数
 show_menu() {
     clear
-    echo -e "欢迎使用realm一键转发脚本 v$VERSION"
-    echo "================="
-    echo "1. 部署环境"
-    echo "2. 添加转发"
-    echo "3. 查看已添加的转发规则"
-    echo "4. 删除转发"
-    echo "5. 启动服务"
-    echo "6. 停止服务"
-    echo "7. 重启服务"
-    echo "8. 一键卸载"
-    echo "9. 检查更新"
-    echo "10. 备份配置"
-    echo "11. 恢复配置"
-    echo "12. 查看详细状态"
-    echo "13. 启用realm开机自启"
-    echo "14. 禁用realm开机自启"
-    echo "0. 退出脚本"
-    echo "================="
-    echo -e "realm 状态：${realm_status_color}${realm_status}\033[0m"
-    echo -n "realm 转发状态："
-    check_realm_service_status
+    local BLUE="\033[0;34m"
+    local GREEN="\033[0;32m"
+    local YELLOW="\033[1;33m"
+    local RED="\033[0;31m"
+    local CYAN="\033[0;36m"
+    local NC="\033[0m" # No Color
+    local BOLD="\033[1m"
+    
+    # 顶部边框
+    echo -e "${BLUE}╔════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${YELLOW}${BOLD}      欢迎使用 Realm 一键转发脚本 v$VERSION      ${NC}${BLUE}║${NC}"
+    echo -e "${BLUE}╠════════════════════════════════════════════╣${NC}"
+    
+    # 基础功能区
+    echo -e "${BLUE}║${CYAN} 基础功能：                                 ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}1${NC}. 部署环境                                ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}2${NC}. 添加转发                                ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}3${NC}. 查看已添加的转发规则                    ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}4${NC}. 删除转发                                ${BLUE}║${NC}"
+    
+    # 服务控制区
+    echo -e "${BLUE}╠────────────────────────────────────────────╣${NC}"
+    echo -e "${BLUE}║${CYAN} 服务控制：                                 ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}5${NC}. 启动服务                                ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}6${NC}. 停止服务                                ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}7${NC}. 重启服务                                ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}13${NC}. 启用realm开机自启                      ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}14${NC}. 禁用realm开机自启                      ${BLUE}║${NC}"
+    
+    # 系统管理区
+    echo -e "${BLUE}╠────────────────────────────────────────────╣${NC}"
+    echo -e "${BLUE}║${CYAN} 系统管理：                                 ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}8${NC}. 一键卸载                                ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}9${NC}. 检查更新                                ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}10${NC}. 备份配置                               ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}11${NC}. 恢复配置                               ${BLUE}║${NC}"
+    echo -e "${BLUE}║${NC}  ${GREEN}12${NC}. 查看详细状态                           ${BLUE}║${NC}"
+    
+    # 底部选项
+    echo -e "${BLUE}╠────────────────────────────────────────────╣${NC}"
+    echo -e "${BLUE}║${NC}  ${RED}0${NC}. 退出脚本                                ${BLUE}║${NC}"
+    echo -e "${BLUE}╠────────────────────────────────────────────╣${NC}"
+    
+    # 状态显示
+    echo -e "${BLUE}║${NC} Realm 状态：${realm_status_color}${realm_status}${NC}${BLUE}                           ║${NC}"
+    echo -e "${BLUE}║${NC} 转发状态：${NC}$(check_realm_service_status)${BLUE}                              ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════╝${NC}"
+    
+    echo -e "\n${YELLOW}请输入选项编号：${NC}"
 }
 
 # 主循环
