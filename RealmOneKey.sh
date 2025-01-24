@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.4.0"
+VERSION="1.4.2"
 
 # 版本号比较函数
 compare_versions() {
@@ -53,6 +53,16 @@ else
     realm_status_color="\033[0;31m" # 红色
 fi
 
+# 获取realm版本的函数
+get_realm_version() {
+    if [ -f "/root/realm/realm" ]; then
+        local version=$(/root/realm/realm -v 2>/dev/null | grep -oP 'realm \K[0-9]+\.[0-9]+\.[0-9]+' || echo "未知")
+        echo "$version"
+    else
+        echo "未安装"
+    fi
+}
+
 # 检查realm服务状态的函数
 check_realm_service_status() {
     # 检查服务是否存在
@@ -73,22 +83,12 @@ check_realm_service_status() {
 
 # 检查服务详细状态
 check_service_details() {
-    if ! systemctl list-unit-files | grep -q realm.service; then
-        echo -e "\033[0;31m服务未安装\033[0m"
-        read -n 1 -s -r -p "按任意键继续..."
-        return 1
-    fi
+    local service_name="realm"
+    local version=$(get_realm_version)
     
-    echo "Realm 服务状态详情："
-    echo "----------------------------------------"
-    
-    # 检查服务状态
-    echo -n "运行状态: "
-    if systemctl is-active --quiet realm; then
-        echo -e "\033[0;32m运行中\033[0m"
-    else
-        echo -e "\033[0;31m未运行\033[0m"
-    fi
+    echo -e "\n服务详细状态："
+    echo "=================="
+    echo -e "Realm 版本: \033[0;32m$version\033[0m"
     
     # 检查开机启动状态
     echo -n "开机启动: "
@@ -97,95 +97,119 @@ check_service_details() {
     else
         echo -e "\033[0;31m未启用\033[0m"
     fi
+    echo "=================="
     
-    # 显示资源使用情况
-    echo "资源使用:"
-    local pid=$(systemctl show -p MainPID realm | cut -d= -f2)
-    if [ "$pid" != "0" ]; then
-        echo "CPU使用率: $(ps -p $pid -o %cpu | tail -n 1)%"
-        echo "内存使用: $(ps -p $pid -o rss | tail -n 1 | awk '{printf "%.2f MB\n",$1/1024}')"
-    else
-        echo -e "\033[0;31m进程未运行\033[0m"
+    if ! systemctl is-active --quiet "$service_name"; then
+        echo -e "\033[0;31m服务未运行\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
     fi
-    
-    # 显示最后100行日志
-    echo "----------------------------------------"
-    echo "最近日志:"
-    journalctl -u realm -n 100 --no-pager
-    
+
+    systemctl status "$service_name"
     read -n 1 -s -r -p "按任意键继续..."
 }
 
 # 部署realm的函数
 deploy_realm() {
-    # 检查是否已安装
-    if [ -d "/root/realm" ]; then
-        echo "realm 已经安装，如需重新安装请先卸载"
-        read -n 1 -s -r -p "按任意键继续..."
-        return
+    if [ -f "/root/realm/realm" ]; then
+        echo "检测到已安装realm，是否重新安装？”
+        read -p "输入 Y 确认重新安装，任意键取消: " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "取消安装。"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
     fi
+
+    echo "开始安装realm..."
     
     # 创建目录
     mkdir -p /root/realm
-    chmod 700 /root/realm
     cd /root/realm || exit
     
+    # 下载最新版本
     echo "正在下载realm..."
-    if ! curl -L -o realm.tar.gz https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-gnu.tar.gz; then
+    if ! wget -q --show-progress https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz; then
         echo -e "\033[0;31m下载失败\033[0m"
-        rm -rf /root/realm
         read -n 1 -s -r -p "按任意键继续..."
-        return
+        return 1
     fi
     
-    # 解压
-    if ! tar -xzf realm.tar.gz; then
-        echo -e "\033[0;31m解压失败\033[0m"
-        rm -rf /root/realm
+    # 验证下载文件
+    if [ ! -f "realm-x86_64-unknown-linux-musl.tar.gz" ]; then
+        echo -e "\033[0;31m下载文件不存在\033[0m"
         read -n 1 -s -r -p "按任意键继续..."
-        return
+        return 1
+    fi
+    
+    # 解压文件
+    echo "正在解压文件..."
+    if ! tar -xzf realm-x86_64-unknown-linux-musl.tar.gz; then
+        echo -e "\033[0;31m解压失败\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    # 验证解压后的文件
+    if [ ! -f "realm" ]; then
+        echo -e "\033[0;31m未找到realm可执行文件\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
     fi
     
     # 设置执行权限
     chmod +x realm
     
-    # 创建配置文件
-    echo '[common]
-port = "80"
-token = "realm"' > config.toml
-    chmod 600 config.toml
+    # 获取版本号
+    local version=$(get_realm_version)
     
     # 创建服务文件
-    echo "[Unit]
-Description=realm forward service
+    echo "正在创建服务文件..."
+    cat > /etc/systemd/system/realm.service << EOF
+[Unit]
+Description=realm
 After=network.target
 
 [Service]
 Type=simple
 User=root
-Restart=on-failure
-RestartSec=5s
+Restart=always
+RestartSec=5
 ExecStart=/root/realm/realm -c /root/realm/config.toml
-WorkingDirectory=/root/realm
+LimitNOFILE=1048576
 
 [Install]
-WantedBy=multi-user.target" > /etc/systemd/system/realm.service
+WantedBy=multi-user.target
+EOF
     
+    # 创建基础配置文件（如果不存在）
+    if [ ! -f "/root/realm/config.toml" ]; then
+        echo "正在创建配置文件..."
+        echo "[network]
+no_tcp = false
+use_udp = true" > /root/realm/config.toml
+    fi
+    
+    # 重新加载systemd配置
     systemctl daemon-reload
-    # 设置开机自启动
+    
+    # 启用并启动服务
     systemctl enable realm
-    # 更新realm状态变量
-    realm_status="已安装"
-    realm_status_color="\033[0;32m" # 绿色
+    if ! systemctl start realm; then
+        echo -e "\033[0;31m服务启动失败\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
     
     # 清理下载文件
-    rm -f realm.tar.gz
+    rm -f realm-x86_64-unknown-linux-musl.tar.gz
     
-    echo -e "\033[0;32m部署完成\033[0m"
-    echo "配置文件位置：/root/realm/config.toml"
-    echo "默认端口：80"
-    echo "默认令牌：realm"
-    echo "请根据需要修改配置文件后重启服务"
+    echo -e "\n安装完成！”
+    echo "=================="
+    echo -e "Realm 版本: \033[0;32m$version\033[0m"
+    echo -e "服务状态: \033[0;32m已启动\033[0m"
+    echo "=================="
+    
     read -n 1 -s -r -p "按任意键继续..."
 }
 
@@ -907,6 +931,7 @@ show_menu() {
     echo -e "${UNDERLINE}系统状态${NC}"
     echo -e "  运行状态: ${realm_status_color}${realm_status}${NC}"
     echo -e "  转发状态: $(check_realm_service_status)"
+    echo -e "  Realm 版本: $(get_realm_version)"
     echo
     
     # 基础功能
