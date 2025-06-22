@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.7.0"
+VERSION="1.7.1"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -946,19 +946,38 @@ check_realm_update() {
     fi
     
     # 执行更新
-    echo "正在更新Realm..."
+    echo -e "\n\033[1;33m开始执行Realm更新流程...\033[0m"
     
     # 备份当前配置
     backup_config
     
     # 创建临时目录
     local temp_dir=$(mktemp -d)
-    cd "$temp_dir" || return 1
+    echo "创建临时目录: $temp_dir"
+    cd "$temp_dir" || {
+        echo -e "\033[0;31m无法进入临时目录\033[0m"
+        return 1
+    }
     
     # 下载最新版本
-    echo "正在下载Realm..."
-    if ! curl -L -o realm-x86_64-unknown-linux-musl.tar.gz "https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz"; then
-        echo -e "\033[0;31m下载失败\033[0m"
+    echo "正在从GitHub下载Realm最新版本..."
+    local download_url="https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz"
+    echo "下载URL: $download_url"
+    
+    if ! curl -L --progress-bar -o realm-x86_64-unknown-linux-musl.tar.gz "$download_url"; then
+        echo -e "\033[0;31m下载失败，curl返回代码: $?\033[0m"
+        ls -la
+        rm -rf "$temp_dir"
+        cd - > /dev/null
+        return 1
+    fi
+    
+    # 检查下载文件大小
+    local file_size=$(du -b realm-x86_64-unknown-linux-musl.tar.gz | cut -f1)
+    echo "下载文件大小: $file_size 字节"
+    if [ "$file_size" -lt 1000000 ]; then  # 假设正常文件至少有1MB
+        echo -e "\033[0;31m下载文件大小异常，可能下载不完整\033[0m"
+        cat realm-x86_64-unknown-linux-musl.tar.gz | head -c 100
         rm -rf "$temp_dir"
         cd - > /dev/null
         return 1
@@ -967,11 +986,16 @@ check_realm_update() {
     # 解压文件
     echo "正在解压文件..."
     if ! tar -xzf realm-x86_64-unknown-linux-musl.tar.gz; then
-        echo -e "\033[0;31m解压失败\033[0m"
+        echo -e "\033[0;31m解压失败，tar返回代码: $?\033[0m"
+        ls -la
         rm -rf "$temp_dir"
         cd - > /dev/null
         return 1
     fi
+    
+    # 列出解压后的文件
+    echo "解压后的文件列表:"
+    ls -la
     
     # 验证解压后的文件
     if [ ! -f "realm" ]; then
@@ -981,14 +1005,35 @@ check_realm_update() {
         return 1
     fi
     
+    # 检查文件是否为有效的可执行文件
+    if ! file realm | grep -q "executable"; then
+        echo -e "\033[0;31mRealm不是有效的可执行文件\033[0m"
+        file realm
+        rm -rf "$temp_dir"
+        cd - > /dev/null
+        return 1
+    fi
+    
     # 停止服务
     echo "停止Realm服务..."
     systemctl stop realm
+    sleep 2
+    
+    # 备份原文件
+    if [ -f "/root/realm/realm" ]; then
+        echo "备份原Realm文件..."
+        cp -f "/root/realm/realm" "/root/realm/realm.bak"
+    fi
     
     # 替换可执行文件
     echo "正在替换realm可执行文件..."
     if ! cp -f realm /root/realm/realm; then
-        echo -e "\033[0;31m替换文件失败\033[0m"
+        echo -e "\033[0;31m替换文件失败，cp返回代码: $?\033[0m"
+        # 恢复原文件
+        if [ -f "/root/realm/realm.bak" ]; then
+            echo "恢复原Realm文件..."
+            cp -f "/root/realm/realm.bak" "/root/realm/realm"
+        fi
         rm -rf "$temp_dir"
         cd - > /dev/null
         systemctl start realm
@@ -996,23 +1041,48 @@ check_realm_update() {
     fi
     
     # 设置执行权限
+    echo "设置执行权限..."
     chmod +x /root/realm/realm
     
     # 启动服务
     echo "启动Realm服务..."
     systemctl start realm
+    sleep 2
+    
+    # 检查服务是否成功启动
+    if ! systemctl is-active --quiet realm; then
+        echo -e "\033[0;31m服务启动失败\033[0m"
+        systemctl status realm --no-pager
+        
+        # 尝试恢复原文件
+        if [ -f "/root/realm/realm.bak" ]; then
+            echo "尝试恢复原版本..."
+            cp -f "/root/realm/realm.bak" "/root/realm/realm"
+            chmod +x /root/realm/realm
+            systemctl start realm
+        fi
+    fi
     
     # 清理
+    echo "清理临时文件..."
     rm -rf "$temp_dir"
     cd - > /dev/null
     
     # 验证新版本
     local new_version=$(get_realm_version)
-    echo -e "\nRealm更新完成！"
-    echo "=================="
-    echo -e "新Realm版本: \033[0;32m$new_version\033[0m"
+    
+    echo -e "\n=================="
+    echo -e "Realm更新完成!"
+    echo -e "原版本: \033[0;33m$current_version\033[0m"
+    echo -e "新版本: \033[0;32m$new_version\033[0m"
     echo -e "服务状态: \033[0;32m$(check_realm_service_status)\033[0m"
     echo "=================="
+    
+    # 验证版本是否确实更新
+    if [ "$new_version" = "$current_version" ]; then
+        echo -e "\033[0;31m警告：版本似乎没有更新，更新可能失败\033[0m"
+        return 1
+    fi
     
     return 0
 }
