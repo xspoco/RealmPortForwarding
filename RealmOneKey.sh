@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.6.0"
+VERSION="1.7.0"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -888,101 +888,293 @@ uninstall_realm() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
+# 检查Realm更新的函数
+check_realm_update() {
+    echo "正在检查Realm更新..."
+    
+    # 获取当前安装的realm版本
+    local current_version=$(get_realm_version)
+    if [ "$current_version" = "未安装" ]; then
+        echo "Realm未安装，请先安装Realm。"
+        return 1
+    fi
+    
+    echo "当前Realm版本：$current_version"
+    
+    # 获取GitHub最新版本信息
+    echo "正在获取GitHub最新版本信息..."
+    local latest_version_info=$(curl -s https://api.github.com/repos/zhboner/realm/releases/latest)
+    if [ $? -ne 0 ]; then
+        echo -e "\033[0;31m获取最新版本信息失败\033[0m"
+        return 1
+    fi
+    
+    # 从API响应中提取最新版本号
+    local latest_version=$(echo "$latest_version_info" | grep -o '"tag_name":.*",' | sed 's/"tag_name": "//g' | sed 's/",//g')
+    if [ -z "$latest_version" ]; then
+        echo -e "\033[0;31m无法解析最新版本号\033[0m"
+        return 1
+    fi
+    
+    # 移除版本号的v前缀(如果有)
+    latest_version=${latest_version#v}
+    
+    echo "GitHub最新Realm版本：$latest_version"
+    
+    # 比较版本
+    compare_versions "$current_version" "$latest_version"
+    local compare_result=$?
+    
+    case $compare_result in
+        0) 
+            echo -e "\033[0;32mRealm已是最新版本！\033[0m"
+            return 0
+            ;;
+        1)
+            echo -e "\033[0;33m当前Realm版本高于GitHub最新发布版本，可能是测试版本\033[0m"
+            read -p "是否仍要更新到GitHub发布版本？(Y/N): " confirm
+            ;;
+        2)
+            echo -e "\033[0;32m发现Realm新版本：$latest_version\033[0m"
+            read -p "是否更新Realm？(Y/N): " confirm
+            ;;
+    esac
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "取消Realm更新"
+        return 0
+    fi
+    
+    # 执行更新
+    echo "正在更新Realm..."
+    
+    # 备份当前配置
+    backup_config
+    
+    # 创建临时目录
+    local temp_dir=$(mktemp -d)
+    cd "$temp_dir" || return 1
+    
+    # 下载最新版本
+    echo "正在下载Realm..."
+    if ! curl -L -o realm-x86_64-unknown-linux-musl.tar.gz "https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz"; then
+        echo -e "\033[0;31m下载失败\033[0m"
+        rm -rf "$temp_dir"
+        cd - > /dev/null
+        return 1
+    fi
+    
+    # 解压文件
+    echo "正在解压文件..."
+    if ! tar -xzf realm-x86_64-unknown-linux-musl.tar.gz; then
+        echo -e "\033[0;31m解压失败\033[0m"
+        rm -rf "$temp_dir"
+        cd - > /dev/null
+        return 1
+    fi
+    
+    # 验证解压后的文件
+    if [ ! -f "realm" ]; then
+        echo -e "\033[0;31m未找到realm可执行文件\033[0m"
+        rm -rf "$temp_dir"
+        cd - > /dev/null
+        return 1
+    fi
+    
+    # 停止服务
+    echo "停止Realm服务..."
+    systemctl stop realm
+    
+    # 替换可执行文件
+    echo "正在替换realm可执行文件..."
+    if ! cp -f realm /root/realm/realm; then
+        echo -e "\033[0;31m替换文件失败\033[0m"
+        rm -rf "$temp_dir"
+        cd - > /dev/null
+        systemctl start realm
+        return 1
+    fi
+    
+    # 设置执行权限
+    chmod +x /root/realm/realm
+    
+    # 启动服务
+    echo "启动Realm服务..."
+    systemctl start realm
+    
+    # 清理
+    rm -rf "$temp_dir"
+    cd - > /dev/null
+    
+    # 验证新版本
+    local new_version=$(get_realm_version)
+    echo -e "\nRealm更新完成！"
+    echo "=================="
+    echo -e "新Realm版本: \033[0;32m$new_version\033[0m"
+    echo -e "服务状态: \033[0;32m$(check_realm_service_status)\033[0m"
+    echo "=================="
+    
+    return 0
+}
+
 # 更新脚本的函数
 update_script() {
     echo "正在检查更新..."
-    echo "当前版本：$VERSION"
+    echo "当前脚本版本：$VERSION"
     
+    # 检查realm更新
+    local check_realm="true"
+    local update_any="false"
+    
+    # 首先检查脚本更新
     # 添加随机数以避免缓存
     local timestamp=$(date +%s)
     local temp_file="/tmp/RealmOneKey_${timestamp}.sh"
     local config_file="/root/realm/config.toml"
     
-    echo "正在从GitHub获取最新版本..."
+    echo "正在从GitHub获取最新脚本版本..."
     # 添加no-cache参数避免缓存，并输出详细信息
     if ! curl -s -H "Cache-Control: no-cache" -o "$temp_file" "https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh?_=${timestamp}"; then
-        echo "更新失败：无法连接到更新服务器"
+        echo "脚本更新失败：无法连接到更新服务器"
         echo "curl错误代码：$?"
         rm -f "$temp_file"
-        read -n 1 -s -r -p "按任意键继续..."
+        
+        # 即使脚本更新失败，也继续检查realm更新
+        echo ""
+        if [ "$check_realm" = "true" ] && [ -f "/root/realm/realm" ]; then
+            check_realm_update
+            read -n 1 -s -r -p "按任意键继续..."
+        else
+            read -n 1 -s -r -p "按任意键继续..."
+        fi
         return 1
     fi
     
     if [ ! -f "$temp_file" ] || [ ! -s "$temp_file" ]; then
-        echo "更新失败：下载的文件无效"
+        echo "脚本更新失败：下载的文件无效"
         rm -f "$temp_file"
-        read -n 1 -s -r -p "按任意键继续..."
+        
+        # 即使脚本更新失败，也继续检查realm更新
+        echo ""
+        if [ "$check_realm" = "true" ] && [ -f "/root/realm/realm" ]; then
+            check_realm_update
+            read -n 1 -s -r -p "按任意键继续..."
+        else
+            read -n 1 -s -r -p "按任意键继续..."
+        fi
         return 1
     fi
     
     # 显示下载的文件内容中的版本号行
-    echo "远程文件版本号行："
+    echo "远程脚本版本号行："
     grep "^VERSION=" "$temp_file"
     
     # 提取远程版本号
     REMOTE_VERSION=$(grep "^VERSION=" "$temp_file" | cut -d'"' -f2)
     
     if [ -z "$REMOTE_VERSION" ]; then
-        echo "无法获取远程版本号"
+        echo "无法获取远程脚本版本号"
         echo "远程文件内容预览（前5行）："
         head -n 5 "$temp_file"
         rm -f "$temp_file"
-        read -n 1 -s -r -p "按任意键继续..."
+        
+        # 继续检查realm更新
+        echo ""
+        if [ "$check_realm" = "true" ] && [ -f "/root/realm/realm" ]; then
+            check_realm_update
+            read -n 1 -s -r -p "按任意键继续..."
+        else
+            read -n 1 -s -r -p "按任意键继续..."
+        fi
         return 1
     fi
     
-    echo "最新版本：$REMOTE_VERSION"
+    echo "远程脚本版本：$REMOTE_VERSION"
     
     # 使用版本比较函数
     compare_versions "$VERSION" "$REMOTE_VERSION"
     local compare_result=$?
     
+    # 检查脚本是否需要更新
+    local update_script="false"
     case $compare_result in
         0) 
-            echo "当前已是最新版本！"
-            echo "如果你确定远程有更新，请尝试以下操作："
-            echo "1. 等待几分钟后再试（GitHub可能需要时间更新缓存）"
-            echo "2. 使用浏览器直接访问脚本地址检查版本"
-            rm -f "$temp_file"
-            read -n 1 -s -r -p "按任意键继续..."
-            return 0
+            echo "当前脚本已是最新版本！"
             ;;
         1)
-            echo "当前版本比远程版本更新，可能是测试版本"
+            echo "当前脚本版本比远程版本更新，可能是测试版本"
             read -p "是否仍要更新到远程版本？(Y/N): " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                update_script="true"
+                update_any="true"
+            fi
             ;;
         2)
-            echo "发现新版本"
-            read -p "是否更新？(Y/N): " confirm
+            echo "发现脚本新版本"
+            read -p "是否更新脚本？(Y/N): " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                update_script="true"
+                update_any="true"
+            fi
             ;;
     esac
     
-    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-        echo "取消更新"
+    # 如果需要更新脚本
+    if [ "$update_script" = "true" ]; then
+        # 备份当前脚本和配置
+        echo "备份当前配置..."
+        if [ -f "$config_file" ]; then
+            backup_config
+        fi
+        cp "$0" "${0}.backup"
+        
+        # 替换当前脚本
+        if ! mv "$temp_file" "$0"; then
+            echo "更新失败：无法替换脚本文件"
+            rm -f "$temp_file"
+            
+            # 继续检查realm更新
+            echo ""
+            if [ "$check_realm" = "true" ] && [ -f "/root/realm/realm" ]; then
+                check_realm_update
+                read -n 1 -s -r -p "按任意键继续..."
+            else
+                read -n 1 -s -r -p "按任意键继续..."
+            fi
+            return 1
+        fi
+        
+        chmod +x "$0"
+        echo "脚本已更新完成！"
+        
+        # 如果不需要检查realm更新，或者realm未安装，直接重启脚本
+        if [ "$check_realm" != "true" ] || [ ! -f "/root/realm/realm" ]; then
+            echo "正在重启脚本..."
+            exec "$0"
+            exit 0
+        fi
+    else
+        # 如果不需要更新脚本，删除临时文件
         rm -f "$temp_file"
+    fi
+    
+    # 检查realm更新
+    if [ "$check_realm" = "true" ] && [ -f "/root/realm/realm" ]; then
+        echo ""
+        check_realm_update
+        update_any="true"
+    fi
+    
+    # 如果脚本已更新，重启脚本
+    if [ "$update_script" = "true" ]; then
+        echo "正在重启脚本..."
+        exec "$0"
+        exit 0
+    elif [ "$update_any" = "true" ]; then
         read -n 1 -s -r -p "按任意键继续..."
-        return 0
-    fi
-    
-    # 备份当前脚本和配置
-    echo "备份当前配置..."
-    if [ -f "$config_file" ]; then
-        backup_config
-    fi
-    cp "$0" "${0}.backup"
-    
-    # 替换当前脚本
-    if ! mv "$temp_file" "$0"; then
-        echo "更新失败：无法替换脚本文件"
-        rm -f "$temp_file"
+    else
         read -n 1 -s -r -p "按任意键继续..."
-        return 1
     fi
-    
-    chmod +x "$0"
-    echo "脚本已更新完成！"
-    echo "正在重启脚本..."
-    exec "$0"
 }
 
 # 管理开机自启动的函数
