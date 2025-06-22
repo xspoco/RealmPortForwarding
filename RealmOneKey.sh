@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.5.9"
+VERSION="1.6.0"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -321,15 +321,15 @@ backup_restore_config() {
             fi
             
             # 选择要恢复的备份
-            read -p "请选择要恢复的备份文件编号（输入0取消）: " choice
-            if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 0 ] || [ "$choice" -gt ${#backup_files[@]} ]; then
-                echo -e "\033[0;31m无效的选择\033[0m"
+            read -p "请选择要恢复的备份文件编号（输入q取消）: " choice
+            if [ "$choice" = "q" ]; then
+                echo "取消恢复"
                 read -n 1 -s -r -p "按任意键继续..."
                 return
             fi
             
-            if [ "$choice" -eq 0 ]; then
-                echo "取消恢复"
+            if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#backup_files[@]} ]; then
+                echo -e "\033[0;31m无效的选择\033[0m"
                 read -n 1 -s -r -p "按任意键继续..."
                 return
             fi
@@ -764,8 +764,14 @@ start_service() {
 # 停止服务的函数
 stop_service() {
     if systemctl is-active --quiet realm; then
-        systemctl stop realm
-        echo "realm 服务已停止"
+        echo "realm 服务正在运行中"
+        read -p "确定要停止服务吗？(y/n): " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            systemctl stop realm
+            echo "realm 服务已停止"
+        else
+            echo "取消停止操作"
+        fi
     else
         echo "realm 服务未在运行"
     fi
@@ -774,8 +780,25 @@ stop_service() {
 
 # 重启服务的函数
 restart_service() {
-    systemctl restart realm
-    echo "realm 服务已重启"
+    if systemctl is-active --quiet realm; then
+        echo "realm 服务正在运行中"
+        read -p "确定要重启服务吗？(y/n): " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            systemctl restart realm
+            echo "realm 服务已重启"
+        else
+            echo "取消重启操作"
+        fi
+    else
+        echo "realm 服务未在运行，将启动服务"
+        read -p "确定要启动服务吗？(y/n): " confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            systemctl start realm
+            echo "realm 服务已启动"
+        else
+            echo "取消启动操作"
+        fi
+    fi
     read -n 1 -s -r -p "按任意键继续..."
 }
 
@@ -783,7 +806,15 @@ restart_service() {
 uninstall_realm() {
     echo "准备卸载realm..."
     read -p "确定要卸载realm吗？这将删除所有相关文件和配置(y/n): " confirm
-    if [[ $confirm != "y" && $confirm != "Y" ]]; then
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "取消卸载"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    # 再次确认
+    read -p "再次确认：所有数据将被删除，确认卸载？(y/n): " confirm2
+    if [[ ! "$confirm2" =~ ^[Yy]$ ]]; then
         echo "取消卸载"
         read -n 1 -s -r -p "按任意键继续..."
         return
