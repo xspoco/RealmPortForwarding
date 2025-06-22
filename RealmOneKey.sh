@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.7.2"
+VERSION="1.7.3"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -1030,19 +1030,81 @@ check_realm_update() {
     systemctl stop realm
     sleep 2
     
+    # 检查服务是否确实停止
+    if systemctl is-active --quiet realm; then
+        echo -e "\033[0;31m服务未能停止，强制终止进程...\033[0m"
+        pkill -9 realm
+        sleep 2
+    fi
+    
     # 备份原文件
     if [ -f "/root/realm/realm" ]; then
         echo "备份原Realm文件..."
         cp -f "/root/realm/realm" "/root/realm/realm.bak"
+        
+        # 验证MD5，确保是不同的文件
+        local old_md5=$(md5sum "/root/realm/realm.bak" | awk '{print $1}')
+        local new_md5=$(md5sum "realm" | awk '{print $1}')
+        
+        echo "原文件MD5: $old_md5"
+        echo "新文件MD5: $new_md5"
+        
+        if [ "$old_md5" = "$new_md5" ]; then
+            echo -e "\033[0;33m警告：新旧文件MD5相同，可能已经是最新版本\033[0m"
+        fi
     fi
     
-    # 替换可执行文件
+    # 确保目标文件夹存在且可写
+    if [ ! -d "/root/realm" ]; then
+        mkdir -p /root/realm
+    fi
+    chmod 755 /root/realm
+    
+    # 删除可能存在的目标文件，确保无覆盖问题
+    if [ -f "/root/realm/realm" ]; then
+        echo "删除旧的Realm文件..."
+        rm -f /root/realm/realm
+    fi
+    
+    # 替换可执行文件 - 使用两种方式确保成功
     echo "正在替换realm可执行文件..."
-    if ! cp -f realm /root/realm/realm; then
-        echo -e "\033[0;31m替换文件失败，cp返回代码: $?\033[0m"
-        # 恢复原文件
+    # 方式1：使用cp命令
+    if ! cp -f "realm" "/root/realm/realm"; then
+        echo -e "\033[0;31mcp命令替换文件失败，尝试使用cat方式...\033[0m"
+        # 方式2：使用cat命令
+        if ! cat "realm" > "/root/realm/realm"; then
+            echo -e "\033[0;31m替换文件失败，恢复原文件\033[0m"
+            if [ -f "/root/realm/realm.bak" ]; then
+                cp -f "/root/realm/realm.bak" "/root/realm/realm"
+            fi
+            rm -rf "$temp_dir"
+            cd - > /dev/null
+            systemctl start realm
+            return 1
+        fi
+    fi
+    
+    # 检查文件是否成功复制
+    if [ ! -f "/root/realm/realm" ]; then
+        echo -e "\033[0;31m复制后目标文件不存在\033[0m"
         if [ -f "/root/realm/realm.bak" ]; then
-            echo "恢复原Realm文件..."
+            cp -f "/root/realm/realm.bak" "/root/realm/realm"
+        fi
+        rm -rf "$temp_dir"
+        cd - > /dev/null
+        systemctl start realm
+        return 1
+    fi
+    
+    # 比较文件大小
+    local src_size=$(wc -c < "realm")
+    local dst_size=$(wc -c < "/root/realm/realm")
+    echo "源文件大小: $src_size 字节"
+    echo "目标文件大小: $dst_size 字节"
+    
+    if [ "$src_size" != "$dst_size" ]; then
+        echo -e "\033[0;31m文件大小不匹配，复制可能不完整\033[0m"
+        if [ -f "/root/realm/realm.bak" ]; then
             cp -f "/root/realm/realm.bak" "/root/realm/realm"
         fi
         rm -rf "$temp_dir"
@@ -1053,7 +1115,7 @@ check_realm_update() {
     
     # 设置执行权限
     echo "设置执行权限..."
-    chmod +x /root/realm/realm
+    chmod 755 /root/realm/realm
     
     # 启动服务
     echo "启动Realm服务..."
@@ -1079,9 +1141,20 @@ check_realm_update() {
     rm -rf "$temp_dir"
     cd - > /dev/null
     
-    # 验证新版本
-    local new_version=$(get_realm_version)
+    # 验证新版本 - 多次尝试获取版本号
+    echo "等待服务完全启动..."
+    sleep 5
+    local new_version=""
+    for i in {1..3}; do
+        new_version=$(get_realm_version)
+        if [ ! -z "$new_version" ] && [ "$new_version" != "未知" ]; then
+            break
+        fi
+        echo "尝试第 $i 次获取版本号..."
+        sleep 2
+    done
     
+    # 输出结果
     echo -e "\n=================="
     echo -e "Realm更新完成!"
     echo -e "原版本: \033[0;33m$current_version\033[0m"
@@ -1089,9 +1162,14 @@ check_realm_update() {
     echo -e "服务状态: \033[0;32m$(check_realm_service_status)\033[0m"
     echo "=================="
     
+    # 显示版本详情
+    echo "直接检查版本详情:"
+    /root/realm/realm -v
+    
     # 验证版本是否确实更新
     if [ "$new_version" = "$current_version" ]; then
         echo -e "\033[0;31m警告：版本似乎没有更新，更新可能失败\033[0m"
+        echo "尝试手动运行: /root/realm/realm -v 查看实际版本"
         return 1
     fi
     
