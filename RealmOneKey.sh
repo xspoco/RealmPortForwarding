@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.7.1"
+VERSION="1.7.2"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -1005,10 +1005,21 @@ check_realm_update() {
         return 1
     fi
     
-    # 检查文件是否为有效的可执行文件
-    if ! file realm | grep -q "executable"; then
-        echo -e "\033[0;31mRealm不是有效的可执行文件\033[0m"
-        file realm
+    # 检查文件是否有执行权限（无需使用file命令）
+    if [ ! -x "realm" ]; then
+        echo -e "\033[0;31mRealm文件没有执行权限\033[0m"
+        ls -la realm
+        chmod +x realm
+        echo "已添加执行权限"
+    else
+        echo "Realm文件具有执行权限"
+    fi
+    
+    # 检查文件大小，确保不是空文件或过小的文件
+    local realm_size=$(wc -c < realm)
+    echo "Realm文件大小: $realm_size 字节"
+    if [ "$realm_size" -lt 1000000 ]; then  # 假设正常文件至少有1MB
+        echo -e "\033[0;31mRealm文件异常，文件过小\033[0m"
         rm -rf "$temp_dir"
         cd - > /dev/null
         return 1
