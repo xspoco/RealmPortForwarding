@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.5.4"
+VERSION="1.5.5"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -93,7 +93,6 @@ check_realm_service_status() {
         return 1
     fi
 }
-
 # 检查服务详细状态
 check_service_details() {
     local service_name="realm"
@@ -128,309 +127,329 @@ check_service_details() {
         echo -e "\n退出查看"
     fi
 }
-# 安装realm
-install_realm() {
-    # 创建安装目录
+
+# 部署realm的函数
+deploy_realm() {
+    if [ -f "/root/realm/realm" ]; then
+        echo "检测到已安装realm，是否重新安装？"
+        read -p "输入 Y 确认重新安装，任意键取消: " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "取消安装。"
+            read -n 1 -s -r -p "按任意键继续..."
+            return
+        fi
+    fi
+
+    echo "开始安装realm..."
+    
+    # 创建目录
     mkdir -p /root/realm
     cd /root/realm || exit
     
-    # 检测系统架构
-    arch=$(uname -m)
-    
-    # 定义下载链接
-    case $arch in
-        x86_64)
-            download_url="https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-gnu.tar.gz"
-            ;;
-        aarch64)
-            download_url="https://github.com/zhboner/realm/releases/latest/download/realm-aarch64-unknown-linux-gnu.tar.gz"
-            ;;
-        *)
-            echo "不支持的系统架构: $arch"
-            return 1
-            ;;
-    esac
-    
-    # 下载并解压
+    # 下载最新版本
     echo "正在下载realm..."
-    if ! wget -q --show-progress "$download_url" -O realm.tar.gz; then
-        echo "下载失败，请检查网络连接"
+    if ! wget -q --show-progress https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz; then
+        echo -e "\033[0;31m下载失败\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
         return 1
     fi
     
-    tar xzf realm.tar.gz
-    rm realm.tar.gz
-    
-    # 创建配置文件目录
-    mkdir -p /etc/realm
-    
-    # 检查是否存在原配置文件
-    if [ ! -f "/etc/realm/config.toml" ]; then
-        # 创建新的配置文件
-        cat > /etc/realm/config.toml << 'EOL'
-# realm default configuration
-[[endpoints]]
-# First endpoint
-listen = "0.0.0.0:0"
-remote = "0.0.0.0:0"
-mode = "tcp"
-remark = "默认规则"
-EOL
+    # 验证下载文件
+    if [ ! -f "realm-x86_64-unknown-linux-musl.tar.gz" ]; then
+        echo -e "\033[0;31m下载文件不存在\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
     fi
     
-    # 创建systemd服务
-    cat > /etc/systemd/system/realm.service << 'EOL'
+    # 解压文件
+    echo "正在解压文件..."
+    if ! tar -xzf realm-x86_64-unknown-linux-musl.tar.gz; then
+        echo -e "\033[0;31m解压失败\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    # 验证解压后的文件
+    if [ ! -f "realm" ]; then
+        echo -e "\033[0;31m未找到realm可执行文件\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    # 设置执行权限
+    chmod +x realm
+    
+    # 获取版本号
+    local version=$(get_realm_version)
+    
+    # 创建服务文件
+    echo "正在创建服务文件..."
+    cat > /etc/systemd/system/realm.service << 'EOF'
 [Unit]
-Description=realm Service
+Description=realm
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/root/realm/realm -c /etc/realm/config.toml
+User=root
 Restart=always
 RestartSec=5
+ExecStart=/root/realm/realm -c /root/realm/config.toml
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
-EOL
+EOF
+    
+    # 创建基础配置文件（如果不存在）
+    if [ ! -f "/root/realm/config.toml" ]; then
+        echo "正在创建配置文件..."
+        cat > /root/realm/config.toml << 'EOF'
+[network]
+no_tcp = false
+use_udp = true
+EOF
+    fi
+    
+    # 重新加载systemd配置
+    systemctl daemon-reload
+    
+    # 启用并启动服务
+    systemctl enable realm
+    if ! systemctl start realm; then
+        echo -e "\033[0;31m服务启动失败\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    # 清理下载文件
+    rm -f realm-x86_64-unknown-linux-musl.tar.gz
+    
+    echo -e "\n安装完成！"
+    echo "=================="
+    echo -e "Realm 版本: \033[0;32m$version\033[0m"
+    echo -e "服务状态: \033[0;32m已启动\033[0m"
+    echo "=================="
+    
+    read -n 1 -s -r -p "按任意键继续..."
+}
+# 配置realm的函数
+configure_realm() {
+    # 检查是否安装了realm
+    if [ ! -f "/root/realm/realm" ]; then
+        echo -e "\033[0;31mrealm未安装，请先安装realm。\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    echo "当前配置内容："
+    echo "================"
+    if [ -f "/root/realm/config.toml" ]; then
+        cat /root/realm/config.toml
+    else
+        echo "配置文件不存在"
+    fi
+    echo "================"
+    echo ""
+    
+    # 提示用户输入配置信息
+    read -p "请输入监听端口 (默认: 8080): " port
+    port=${port:-8080}
+    
+    read -p "请输入密码 (默认: realm): " password
+    password=${password:-realm}
+    
+    # 创建新的配置文件
+    cat > /root/realm/config.toml << EOF
+[network]
+no_tcp = false
+use_udp = true
+port = ${port}
+
+[relay]
+password = "${password}"
+EOF
+    
+    # 重启服务
+    echo "正在重启realm服务..."
+    if ! systemctl restart realm; then
+        echo -e "\033[0;31m服务重启失败\033[0m"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    echo -e "\n配置已更新！"
+    echo "================"
+    echo -e "端口: \033[0;32m$port\033[0m"
+    echo -e "密码: \033[0;32m$password\033[0m"
+    echo "================"
+    
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 卸载realm的函数
+uninstall_realm() {
+    echo "警告：此操作将完全卸载realm。"
+    read -p "确定要卸载吗？(Y/N): " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "取消卸载。"
+        read -n 1 -s -r -p "按任意键继续..."
+        return
+    fi
+    
+    # 停止并禁用服务
+    echo "停止realm服务..."
+    systemctl stop realm
+    systemctl disable realm
+    
+    # 删除服务文件
+    echo "删除服务文件..."
+    rm -f /etc/systemd/system/realm.service
+    
+    # 删除realm目录
+    echo "删除realm文件..."
+    rm -rf /root/realm
     
     # 重新加载systemd
     systemctl daemon-reload
     
-    # 设置开机自启
-    systemctl enable realm
-    
-    # 启动服务
-    systemctl start realm
-    
-    echo "realm安装完成！"
-    realm_status="已安装"
-    realm_status_color="$GREEN"
+    echo -e "\n卸载完成！"
+    read -n 1 -s -r -p "按任意键继续..."
 }
 
-# 卸载realm
-uninstall_realm() {
-    echo -e "${YELLOW}警告：这将完全删除realm及其所有配置文件。${NC}"
-    read -p "确定要卸载吗？(y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]
-    then
-        # 停止服务
-        systemctl stop realm
+# 管理realm服务的函数
+manage_service() {
+    while true; do
+        clear
+        echo -e "${CYAN}================== Realm 服务管理 ==================${NC}"
+        echo -e "1. ${GREEN}启动服务${NC}"
+        echo -e "2. ${RED}停止服务${NC}"
+        echo -e "3. ${YELLOW}重启服务${NC}"
+        echo -e "4. ${CYAN}查看服务状态${NC}"
+        echo -e "0. ${YELLOW}返回主菜单${NC}"
+        echo "=================================================="
         
-        # 禁用服务
-        systemctl disable realm
+        read -p "请选择操作 [0-4]: " choice
         
-        # 删除服务文件
-        rm -f /etc/systemd/system/realm.service
-        
-        # 重新加载systemd
-        systemctl daemon-reload
-        
-        # 删除程序文件
-        rm -rf /root/realm
-        
-        # 删除配置文件
-        rm -rf /etc/realm
-        
-        echo "realm已完全卸载！"
-        realm_status="未安装"
-        realm_status_color="$RED"
-    else
-        echo "取消卸载"
-    fi
-}
-
-# 备份配置
-backup_config() {
-    local backup_dir="/root/realm_backup"
-    local date_suffix=$(date +"%Y%m%d_%H%M%S")
-    local backup_file="${backup_dir}/realm_config_${date_suffix}.tar.gz"
-    
-    # 创建备份目录
-    mkdir -p "$backup_dir"
-    
-    # 创建临时目录
-    local temp_dir=$(mktemp -d)
-    
-    # 复制配置文件到临时目录
-    cp -r /etc/realm/* "$temp_dir/"
-    
-    # 创建备份
-    tar -czf "$backup_file" -C "$temp_dir" .
-    
-    # 清理临时目录
-    rm -rf "$temp_dir"
-    
-    echo "配置已备份到: $backup_file"
-}
-
-# 恢复配置
-restore_config() {
-    local backup_dir="/root/realm_backup"
-    
-    # 检查备份目录是否存在
-    if [ ! -d "$backup_dir" ]; then
-        echo "未找到备份目录"
-        return 1
-    fi
-    
-    # 列出所有备份文件
-    local backup_files=("$backup_dir"/realm_config_*.tar.gz)
-    if [ ! -f "${backup_files[0]}" ]; then
-        echo "未找到备份文件"
-        return 1
-    fi
-    
-    echo "可用的备份文件："
-    local i=1
-    for file in "${backup_files[@]}"; do
-        echo "$i) $(basename "$file")"
-        ((i++))
+        case $choice in
+            1)
+                echo "正在启动realm服务..."
+                systemctl start realm
+                sleep 2
+                ;;
+            2)
+                echo "正在停止realm服务..."
+                systemctl stop realm
+                sleep 2
+                ;;
+            3)
+                echo "正在重启realm服务..."
+                systemctl restart realm
+                sleep 2
+                ;;
+            4)
+                check_service_details
+                ;;
+            0)
+                break
+                ;;
+            *)
+                echo "无效选项"
+                sleep 2
+                ;;
+        esac
     done
-    
-    read -p "请选择要恢复的备份文件编号: " choice
-    
-    if [ "$choice" -ge 1 ] && [ "$choice" -le ${#backup_files[@]} ]; then
-        local selected_file="${backup_files[$((choice-1))]}"
-        
-        # 创建临时目录
-        local temp_dir=$(mktemp -d)
-        
-        # 解压备份文件到临时目录
-        tar -xzf "$selected_file" -C "$temp_dir"
-        
-        # 停止realm服务
-        systemctl stop realm
-        
-        # 恢复配置文件
-        rm -rf /etc/realm/*
-        cp -r "$temp_dir"/* /etc/realm/
-        
-        # 清理临时目录
-        rm -rf "$temp_dir"
-        
-        # 重启realm服务
-        systemctl start realm
-        
-        echo "配置已恢复"
-    else
-        echo "无效的选择"
-    fi
-}
-# 主菜单
-show_menu() {
-    clear
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "              ${BOLD}Realm 管理脚本${NC}"
-    echo -e "          ${UNDERLINE}当前版本：v${VERSION}${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e " 当前状态：${realm_status_color}$realm_status${NC}"
-    echo -e " 运行状态：$(check_realm_service_status)"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e " ${GREEN}1.${NC} 安装 Realm"
-    echo -e " ${GREEN}2.${NC} 卸载 Realm"
-    echo -e " ${GREEN}3.${NC} 启动 Realm"
-    echo -e " ${GREEN}4.${NC} 停止 Realm"
-    echo -e " ${GREEN}5.${NC} 重启 Realm"
-    echo -e " ${GREEN}6.${NC} 查看服务状态"
-    echo -e " ${GREEN}7.${NC} 查看配置文件"
-    echo -e " ${GREEN}8.${NC} 编辑配置文件"
-    echo -e " ${GREEN}9.${NC} 备份配置"
-    echo -e " ${GREEN}10.${NC} 恢复配置"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e " ${GREEN}0.${NC} 退出脚本"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    read -p "请输入选项 [0-10]: " choice
 }
 
-# 主程序循环
-while true; do
-    show_menu
-    case $choice in
+# 检查更新
+check_update() {
+    echo "正在检查更新..."
+    
+    # 获取GitHub最新版本
+    latest_version=$(curl -s https://api.github.com/repos/zhboner/realm/releases/latest | grep -oP '"tag_name": "\K(.+)(?=")')
+    if [ -z "$latest_version" ]; then
+        echo -e "${RED}无法获取最新版本信息${NC}"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    }
+    
+    # 获取当前安装的版本
+    current_version=$(get_realm_version)
+    if [ "$current_version" == "未安装" ]; then
+        echo -e "${YELLOW}Realm 未安装${NC}"
+        read -n 1 -s -r -p "按任意键继续..."
+        return 1
+    fi
+    
+    echo -e "当前版本: ${CYAN}${current_version}${NC}"
+    echo -e "最新版本: ${CYAN}${latest_version}${NC}"
+    
+    # 比较版本
+    compare_versions "$current_version" "$latest_version"
+    case $? in
+        0)
+            echo -e "${GREEN}已经是最新版本${NC}"
+            ;;
         1)
-            if [ "$realm_status" = "已安装" ]; then
-                echo "realm已经安装，如需重新安装请先卸载"
-            else
-                install_realm
-            fi
+            echo -e "${YELLOW}当前版本高于远程版本${NC}"
             ;;
         2)
-            if [ "$realm_status" = "未安装" ]; then
-                echo "realm未安装，无需卸载"
-            else
-                uninstall_realm
+            echo -e "${YELLOW}发现新版本${NC}"
+            read -p "是否要更新？(Y/N): " confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                deploy_realm
             fi
+            ;;
+    esac
+    
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 主菜单循环
+while true; do
+    clear
+    local_version=$(get_realm_version)
+    service_status=$(check_realm_service_status)
+    
+    echo -e "${CYAN}===================== Realm 管理脚本 =====================${NC}"
+    echo -e "脚本版本: ${GREEN}${VERSION}${NC}"
+    echo -e "Realm状态: ${realm_status_color}${realm_status}${NC}"
+    echo -e "当前版本: ${CYAN}${local_version}${NC}"
+    echo -e "服务状态: ${service_status}"
+    echo "========================================================="
+    echo -e "1. ${GREEN}安装/更新 Realm${NC}"
+    echo -e "2. ${YELLOW}配置 Realm${NC}"
+    echo -e "3. ${CYAN}服务管理${NC}"
+    echo -e "4. ${YELLOW}检查更新${NC}"
+    echo -e "5. ${RED}卸载 Realm${NC}"
+    echo -e "0. ${RED}退出脚本${NC}"
+    echo "========================================================="
+    
+    read -p "请选择操作 [0-5]: " option
+    
+    case $option in
+        1)
+            deploy_realm
+            ;;
+        2)
+            configure_realm
             ;;
         3)
-            if [ "$realm_status" = "未安装" ]; then
-                echo "realm未安装，请先安装"
-            else
-                systemctl start realm
-                echo "realm已启动"
-            fi
+            manage_service
             ;;
         4)
-            if [ "$realm_status" = "未安装" ]; then
-                echo "realm未安装，请先安装"
-            else
-                systemctl stop realm
-                echo "realm已停止"
-            fi
+            check_update
             ;;
         5)
-            if [ "$realm_status" = "未安装" ]; then
-                echo "realm未安装，请先安装"
-            else
-                systemctl restart realm
-                echo "realm已重启"
-            fi
-            ;;
-        6)
-            if [ "$realm_status" = "未安装" ]; then
-                echo "realm未安装，请先安装"
-            else
-                check_service_details
-            fi
-            ;;
-        7)
-            if [ -f "/etc/realm/config.toml" ]; then
-                cat /etc/realm/config.toml
-                read -n 1 -s -r -p "按任意键继续..."
-            else
-                echo "配置文件不存在"
-            fi
-            ;;
-        8)
-            if [ -f "/etc/realm/config.toml" ]; then
-                nano /etc/realm/config.toml
-            else
-                echo "配置文件不存在"
-            fi
-            ;;
-        9)
-            if [ "$realm_status" = "未安装" ]; then
-                echo "realm未安装，无法备份配置"
-            else
-                backup_config
-            fi
-            ;;
-        10)
-            if [ "$realm_status" = "未安装" ]; then
-                echo "realm未安装，无法恢复配置"
-            else
-                restore_config
-            fi
+            uninstall_realm
             ;;
         0)
             echo "感谢使用！"
             exit 0
             ;;
         *)
-            echo "无效的选项，请重新选择"
+            echo "无效选项"
+            sleep 2
             ;;
     esac
-    echo ""
-    read -n 1 -s -r -p "按任意键继续..."
 done
