@@ -1,4 +1,5 @@
-![image](https://github.com/user-attachments/assets/b85ae442-67e3-41fe-b697-931bbd049cd6)
+![image](https://github.com/user-attachments/assets/7a967883-c2d2-4434-b182-63b0b1cfc852)
+
 
 ## 使用方法：
 复制这个运行：`wget https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh && chmod +x RealmOneKey.sh && ./RealmOneKey.sh`
