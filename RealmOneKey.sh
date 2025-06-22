@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.5.6"
+VERSION="1.5.8"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -615,8 +615,14 @@ delete_forward() {
     
     # 使用 awk 提取规则并保存到临时文件
     awk '
-    BEGIN { count = 0; }
+    BEGIN { count = 0; in_endpoint = 0; }
     /\[\[endpoints\]\]/ { 
+        # 如果上一个规则还没打印，先打印出来
+        if (in_endpoint && listen != "" && remote != "") {
+            count++;
+            print listen "\t" remote "\t" comment;
+        }
+        # 重置状态
         in_endpoint = 1;
         listen = "";
         remote = "";
@@ -638,12 +644,8 @@ delete_forward() {
         gsub(/"[[:space:]]*$/, "");
         comment = $0;
     }
-    in_endpoint && (!/comment *=/) && (/\[\[endpoints\]\]/ || /\[.*\]/ || ENDFILE) {
-        count++;
-        print listen "\t" remote "\t" comment;
-        in_endpoint = 0;
-    }
     END {
+        # 确保最后一个规则也被打印
         if (in_endpoint && listen != "" && remote != "") {
             count++;
             print listen "\t" remote "\t" comment;
@@ -677,19 +679,21 @@ delete_forward() {
     local valid_input=0
     local choice
     while [ $valid_input -eq 0 ]; do
-        read -p "请输入要删除的规则编号 (1-$rules_count)，输入 0 取消: " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]]; then
-            if [ $choice -ge 0 ] && [ $choice -le $rules_count ]; then
+        read -p "请输入要删除的规则编号 (1-$rules_count)，输入 q 取消: " choice
+        if [ "$choice" = "q" ]; then
+            valid_input=1
+        elif [[ "$choice" =~ ^[0-9]+$ ]]; then
+            if [ $choice -ge 1 ] && [ $choice -le $rules_count ]; then
                 valid_input=1
             else
-                echo "无效的选择，请输入 0-$rules_count 之间的数字。"
+                echo "无效的选择，请输入 1-$rules_count 之间的数字，或输入 q 取消。"
             fi
         else
-            echo "无效的输入，请输入数字。"
+            echo "无效的输入，请输入数字或 q 取消。"
         fi
     done
     
-    if [ $choice -eq 0 ]; then
+    if [ "$choice" = "q" ]; then
         echo "取消删除操作。"
         rm -f "$temp_file" "$rules_file"
         read -n 1 -s -r -p "按任意键继续..."
@@ -712,6 +716,10 @@ use_udp = true" > "$temp_file"
             echo -e "\n[[endpoints]]
 listen = \"$listen\"
 remote = \"$remote\"" >> "$temp_file"
+            # 如果有备注，也添加进去
+            if [ ! -z "$comment" ]; then
+                echo "comment = \"$comment\"" >> "$temp_file"
+            fi
         fi
     done < "$rules_file"
     
