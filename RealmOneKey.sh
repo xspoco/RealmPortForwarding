@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.7.3"
+VERSION="1.7.4"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -959,17 +959,27 @@ check_realm_update() {
         return 1
     }
     
-    # 下载最新版本
-    echo "正在从GitHub下载Realm最新版本..."
-    local download_url="https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz"
+    # 构造指定版本的下载URL
+    echo "正在从GitHub下载Realm版本: $latest_version"
+    # 不再使用latest/download链接，而是直接指定版本
+    local download_url="https://github.com/zhboner/realm/releases/download/v${latest_version}/realm-x86_64-unknown-linux-musl.tar.gz"
     echo "下载URL: $download_url"
     
     if ! curl -L --progress-bar -o realm-x86_64-unknown-linux-musl.tar.gz "$download_url"; then
         echo -e "\033[0;31m下载失败，curl返回代码: $?\033[0m"
-        ls -la
-        rm -rf "$temp_dir"
-        cd - > /dev/null
-        return 1
+        
+        # 如果特定版本下载失败，尝试使用latest链接作为备选
+        echo "尝试使用latest链接作为备选..."
+        local fallback_url="https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz"
+        echo "备选URL: $fallback_url"
+        
+        if ! curl -L --progress-bar -o realm-x86_64-unknown-linux-musl.tar.gz "$fallback_url"; then
+            echo -e "\033[0;31m备选下载也失败，curl返回代码: $?\033[0m"
+            ls -la
+            rm -rf "$temp_dir"
+            cd - > /dev/null
+            return 1
+        fi
     fi
     
     # 检查下载文件大小
