@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.5.8"
+VERSION="1.5.9"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -122,7 +122,8 @@ check_service_details() {
         return
     fi
 
-    systemctl status "$service_name"
+    # 使用 --no-pager 选项避免进入分页视图
+    systemctl status --no-pager "$service_name"
     read -n 1 -s -r -p "按任意键继续... (q退出)" key
     if [ "$key" = "q" ]; then
         echo -e "\n退出查看"
