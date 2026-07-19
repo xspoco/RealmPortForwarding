@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="1.9.0"
+VERSION="1.9.1"
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 [ ! -f "$SCRIPT_PATH" ] && SCRIPT_PATH="$0"
@@ -43,7 +43,6 @@ download_realm_asset() {
     fi
     echo "下载地址: $url" >&2
     rm -f "$filename"
-    # 修复点：增加超时限制，防止网络异常时永久卡死
     if curl -fL --connect-timeout 10 --max-time 120 --progress-bar -o "$filename" "$url" 2>/dev/null || wget -q --timeout=20 --tries=2 -O "$filename" "$url"; then
         if [ -s "$filename" ]; then
             echo "$filename"; return 0
@@ -183,7 +182,6 @@ EOF
     systemctl start realm
     sleep 2
     
-    # 修复点：清理下载的压缩包，避免残留
     rm -f "$f"
 
     if ! systemctl is-active --quiet realm; then
@@ -322,6 +320,9 @@ add_forward() {
     [ -f "$cfg" ] && cp "$cfg" "$cfg.bak" || init_realm_config
     init_realm_config
 
+    # 修复点：移除空数组声明，避免 TOML 解析报 duplicate key 错误
+    sed -i '/^endpoints = \[\]/d' "$cfg"
+
     {
         echo ""
         echo "[[endpoints]]"
@@ -398,9 +399,13 @@ delete_forward() {
 
     cp "$cfg" "$cfg.bak"
 
+    # 修复点：如果删除后没有规则了，补充空数组声明，否则不生成它
+    local remaining=$((total - 1))
     {
-        echo "endpoints = []"
-        echo ""
+        if [ "$remaining" -eq 0 ]; then
+            echo "endpoints = []"
+            echo ""
+        fi
         echo "[network]"
         echo "no_tcp = false"
         echo "use_udp = true"
@@ -578,7 +583,6 @@ check_realm_update() {
     echo "正在获取GitHub最新版本信息..."
     
     local info rc
-    # 修复点：增加网络请求超时
     info=$(curl -s --connect-timeout 10 --max-time 20 https://api.github.com/repos/zhboner/realm/releases/latest)
     rc=$?
     [ $rc -ne 0 ] && { echo -e "${RED}获取最新版本信息失败${NC}"; return 1; }
@@ -587,7 +591,6 @@ check_realm_update() {
     [ -z "$latest" ] && { echo -e "${RED}无法解析最新版本号${NC}"; return 1; }
     latest=${latest#v}
     
-    # 修复点：校验版本号格式，防止获取到脏数据
     [[ ! "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && { echo -e "${RED}解析到的最新版本号格式异常：$latest${NC}"; return 1; }
     echo "GitHub最新Realm版本：$latest"
 
@@ -664,7 +667,6 @@ check_realm_update() {
     if ! systemctl is-active --quiet realm; then
         if ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
             echo -e "${YELLOW}更新完成，由于无转发规则，服务处于待机状态。${NC}"
-            # 修复点：更新成功后清理备份
             rm -f /root/realm/realm.bak
         else
             echo -e "${RED}服务启动失败${NC}"; show_service_diagnostics
@@ -689,7 +691,6 @@ update_script() {
     
     local ts=$(date +%s) tf="/tmp/RealmOneKey_${ts}.sh"
     echo "正在从GitHub获取最新脚本版本..."
-    # 修复点：增加超时限制
     if ! curl -s --connect-timeout 10 --max-time 30 -H "Cache-Control: no-cache" -o "$tf" "https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh?_=$ts"; then
         echo -e "${RED}脚本下载失败${NC}"
         [ -f /root/realm/realm ] && check_realm_update
@@ -700,7 +701,6 @@ update_script() {
     local rv; rv=$(grep '^VERSION=' "$tf" | cut -d'"' -f2)
     [ -z "$rv" ] && { echo "无法获取远程脚本版本号"; rm -f "$tf"; return 1; }
     
-    # 修复点：校验脚本版本号格式，防止污染文件被覆盖
     [[ ! "$rv" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && { echo "远程脚本版本号格式异常，可能是下载被干扰"; rm -f "$tf"; return 1; }
     echo "远程脚本版本：$rv"
 
