@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.8.1"
+VERSION="1.8.2"
 
 # 记录脚本自身的绝对路径。脚本运行过程中（如部署/更新功能）会 cd 到其他目录，
 # 若后续仍用相对的 $0 操作自身文件会因当前目录已变化而找不到文件，
@@ -316,13 +316,13 @@ deploy_realm() {
 Description=realm
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=root
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 ExecStart=/root/realm/realm -c /root/realm/config.toml
 LimitNOFILE=1048576
 
@@ -337,7 +337,14 @@ EOF
 [network]
 no_tcp = false
 use_udp = true
+
+endpoints = []
 EOF
+    elif ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml && ! grep -qE "^[[:space:]]*endpoints[[:space:]]*=" /root/realm/config.toml; then
+        # 自愈：修复此前版本可能生成的、缺少 endpoints 字段的旧配置文件
+        # （realm 2.9.x 起该字段为必填，缺失会导致启动时直接崩溃）
+        echo "检测到现有配置文件缺少必需的 endpoints 字段，正在自动修复..."
+        echo "endpoints = []" >> /root/realm/config.toml
     fi
     
     # 重新加载systemd配置
@@ -851,9 +858,11 @@ use_udp = true" > "$temp_file"
     
     # 重建配置文件，跳过要删除的规则
     local current_rule=0
+    local remaining_count=0
     while IFS=$'\t' read -r listen remote comment; do
         ((current_rule++))
         if [ $current_rule -ne $choice ]; then
+            ((remaining_count++))
             echo -e "\n[[endpoints]]
 listen = \"$listen\"
 remote = \"$remote\"" >> "$temp_file"
@@ -863,6 +872,12 @@ remote = \"$remote\"" >> "$temp_file"
             fi
         fi
     done < "$rules_file"
+    
+    # 若删除后已没有任何转发规则，realm要求配置文件里仍需存在 endpoints 字段（可以是空数组），
+    # 否则新版本realm解析配置时会因缺少该字段而崩溃退出
+    if [ "$remaining_count" -eq 0 ]; then
+        echo -e "\nendpoints = []" >> "$temp_file"
+    fi
     
     # 替换原配置文件
     if ! mv "$temp_file" "/root/realm/config.toml"; then
@@ -1490,11 +1505,19 @@ verify_config() {
         return 1
     fi
     
-    # 检查基本的TOML格式：至少要有一个 [[endpoints]] 分段，并且包含 listen 和 remote 字段
-    if ! grep -q "\[\[endpoints\]\]" "$config_file"; then
+    # 检查基本的TOML格式：必须存在 [network] 段
+    if ! grep -q "^\[network\]" "$config_file"; then
         return 1
     fi
-    if ! grep -q "^[[:space:]]*listen[[:space:]]*=" "$config_file" || ! grep -q "^[[:space:]]*remote[[:space:]]*=" "$config_file"; then
+    
+    # endpoints 字段必须存在，可以是空数组（无转发规则）或若干个 [[endpoints]] 表
+    if grep -q "\[\[endpoints\]\]" "$config_file"; then
+        # 有具体规则时，每条规则都应包含 listen 和 remote
+        if ! grep -q "^[[:space:]]*listen[[:space:]]*=" "$config_file" || ! grep -q "^[[:space:]]*remote[[:space:]]*=" "$config_file"; then
+            return 1
+        fi
+    elif ! grep -qE "^[[:space:]]*endpoints[[:space:]]*=[[:space:]]*\[\]" "$config_file"; then
+        # 既没有 [[endpoints]] 规则，也没有显式的空 endpoints = []，说明这个文件在新版realm下会解析失败
         return 1
     fi
     
