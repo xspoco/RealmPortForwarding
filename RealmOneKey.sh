@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.8.2"
+VERSION="1.8.3"
 
 # 记录脚本自身的绝对路径。脚本运行过程中（如部署/更新功能）会 cd 到其他目录，
 # 若后续仍用相对的 $0 操作自身文件会因当前目录已变化而找不到文件，
@@ -333,18 +333,21 @@ EOF
     # 创建基础配置文件（如果不存在）
     if [ ! -f "/root/realm/config.toml" ]; then
         echo "正在创建配置文件..."
+        # 注意：endpoints 必须写在任何 [表头] 之前，否则会被TOML解析成 network.endpoints
+        # 而不是顶层字段，导致 realm 仍然报 "missing field endpoints"
         cat > /root/realm/config.toml << 'EOF'
+endpoints = []
+
 [network]
 no_tcp = false
 use_udp = true
-
-endpoints = []
 EOF
     elif ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml && ! grep -qE "^[[:space:]]*endpoints[[:space:]]*=" /root/realm/config.toml; then
         # 自愈：修复此前版本可能生成的、缺少 endpoints 字段的旧配置文件
         # （realm 2.9.x 起该字段为必填，缺失会导致启动时直接崩溃）
+        # 必须插入到文件最前面（任何表头之前），否则仍会被当成 network 表内部字段
         echo "检测到现有配置文件缺少必需的 endpoints 字段，正在自动修复..."
-        echo "endpoints = []" >> /root/realm/config.toml
+        { echo "endpoints = []"; echo; cat /root/realm/config.toml; } > /root/realm/config.toml.tmp && mv /root/realm/config.toml.tmp /root/realm/config.toml
     fi
     
     # 重新加载systemd配置
@@ -851,18 +854,28 @@ delete_forward() {
     # 备份配置文件
     cp "/root/realm/config.toml" "/root/realm/config.toml.bak"
     
+    # 删除后剩余规则数（choice 已确认在 1..rules_count 范围内，必然会删掉一条）
+    local remaining_after_delete=$((rules_count - 1))
+    
     # 创建新的配置文件
+    # 若删除后已没有任何转发规则，需要在 [network] 表头之前放置顶层的 endpoints = []
+    # （必须在任何表头之前，否则会被TOML解析成 network.endpoints 而不是顶层字段，
+    #  导致 realm 2.9.x 仍然报 "missing field endpoints" 崩溃）
+    if [ "$remaining_after_delete" -eq 0 ]; then
+        echo "endpoints = []
+" > "$temp_file"
+    else
+        : > "$temp_file"
+    fi
     echo "[network]
 no_tcp = false
-use_udp = true" > "$temp_file"
+use_udp = true" >> "$temp_file"
     
     # 重建配置文件，跳过要删除的规则
     local current_rule=0
-    local remaining_count=0
     while IFS=$'\t' read -r listen remote comment; do
         ((current_rule++))
         if [ $current_rule -ne $choice ]; then
-            ((remaining_count++))
             echo -e "\n[[endpoints]]
 listen = \"$listen\"
 remote = \"$remote\"" >> "$temp_file"
@@ -872,12 +885,6 @@ remote = \"$remote\"" >> "$temp_file"
             fi
         fi
     done < "$rules_file"
-    
-    # 若删除后已没有任何转发规则，realm要求配置文件里仍需存在 endpoints 字段（可以是空数组），
-    # 否则新版本realm解析配置时会因缺少该字段而崩溃退出
-    if [ "$remaining_count" -eq 0 ]; then
-        echo -e "\nendpoints = []" >> "$temp_file"
-    fi
     
     # 替换原配置文件
     if ! mv "$temp_file" "/root/realm/config.toml"; then
