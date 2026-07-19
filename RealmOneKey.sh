@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.7.4"
+VERSION="1.8.0"
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -66,11 +66,111 @@ else
     realm_status_color="\033[0;31m" # 红色
 fi
 
-# 获取realm版本的函数
+# -------------------------------------------------------------------
+# 新增：架构探测与资源包选择
+# realm 官方发行版按 CPU 架构 + libc 类型打包，原脚本写死了
+# x86_64-unknown-linux-musl，导致非 x86_64 服务器（如 ARM VPS）下载后
+# 无法运行。这里自动识别架构，并在 musl 版本运行异常时自动尝试 gnu 版本。
+# -------------------------------------------------------------------
+detect_realm_asset() {
+    local libc=${1:-musl}
+    local machine
+    machine=$(uname -m)
+    case "$machine" in
+        x86_64|amd64)
+            echo "x86_64-unknown-linux-${libc}"
+            ;;
+        aarch64|arm64)
+            echo "aarch64-unknown-linux-${libc}"
+            ;;
+        armv7l|armv7)
+            echo "arm-unknown-linux-${libc}eabihf"
+            ;;
+        *)
+            echo -e "\033[0;33m警告：未识别的CPU架构 $machine，将尝试使用 x86_64 版本\033[0m" >&2
+            echo "x86_64-unknown-linux-${libc}"
+            ;;
+    esac
+}
+
+# 下载指定版本（或 latest）的 realm 资源包到当前目录
+# 用法: download_realm_asset <version_tag_or_latest> <libc: musl|gnu>
+# 成功时把文件名回显到标准输出（最后一行），方便调用方获取
+download_realm_asset() {
+    local version="$1"
+    local libc="${2:-musl}"
+    local asset
+    asset=$(detect_realm_asset "$libc")
+    local filename="realm-${asset}.tar.gz"
+    local url
+
+    if [ "$version" = "latest" ]; then
+        url="https://github.com/zhboner/realm/releases/latest/download/${filename}"
+    else
+        url="https://github.com/zhboner/realm/releases/download/v${version#v}/${filename}"
+    fi
+
+    echo "下载地址: $url" >&2
+    if curl -fL --progress-bar -o "$filename" "$url" || wget -q --show-progress -O "$filename" "$url"; then
+        if [ -s "$filename" ]; then
+            echo "$filename"
+            return 0
+        fi
+    fi
+    rm -f "$filename"
+    return 1
+}
+
+# 自检可执行文件是否能正常运行（用于发现"非法指令/段错误"等与CPU不兼容的问题）
+# 返回 0 正常，1 崩溃（被信号杀死），2 其他错误
+self_test_realm_binary() {
+    local bin="$1"
+    if [ ! -x "$bin" ]; then
+        return 2
+    fi
+    "$bin" -v > /tmp/.realm_selftest.log 2>&1
+    local ec=$?
+    if [ $ec -gt 128 ]; then
+        # 128+信号编号，说明被信号杀死（如 SIGILL=132, SIGSEGV=139）
+        local sig=$((ec - 128))
+        echo -e "\033[0;31m检测到realm可执行文件运行时崩溃（信号 $sig），很可能是与当前CPU/系统不兼容\033[0m" >&2
+        return 1
+    elif [ $ec -ne 0 ]; then
+        echo -e "\033[0;31mrealm -v 返回非零退出码：$ec\033[0m" >&2
+        cat /tmp/.realm_selftest.log >&2
+        return 2
+    fi
+    return 0
+}
+
+# 服务启动/重启失败时的诊断信息，尽量帮助用户一眼看出问题所在
+show_service_diagnostics() {
+    echo -e "\n${YELLOW}${BOLD}== 服务诊断信息 ==${NC}"
+    echo "---- systemctl status realm ----"
+    systemctl --no-pager status realm 2>&1 | head -n 15
+    echo "---- journalctl -u realm (最近20行) ----"
+    journalctl -u realm --no-pager -n 20 2>&1
+    echo "----------------------------------------"
+    if [ -f "/root/realm/config.toml" ]; then
+        echo "当前配置文件内容："
+        cat -A /root/realm/config.toml 2>/dev/null | sed 's/\^I/\t/g;s/\$$//' | head -n 40
+    fi
+    echo -e "${YELLOW}常见原因：1) 配置文件里端口已被占用或格式错误 2) 该realm可执行文件与当前系统/CPU不兼容（例如出现 signal 4/11）3) 权限不足${NC}"
+    read -n 1 -s -r -p "按任意键继续..."
+}
+
+# 获取realm版本的函数（兼容不同版本输出格式，如 "Realm 2.9.4" / "realm 2.9.4" / 带方括号特性标记）
 get_realm_version() {
     if [ -f "/root/realm/realm" ]; then
-        local version=$(/root/realm/realm -v 2>/dev/null | grep -oP '(?i)realm \K[0-9]+\.[0-9]+\.[0-9]+' || echo "未知")
-        echo "$version"
+        local raw
+        raw=$(/root/realm/realm -v 2>/dev/null)
+        local version
+        version=$(echo "$raw" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+        if [ -z "$version" ]; then
+            echo "未知"
+        else
+            echo "$version"
+        fi
     else
         echo "未安装"
     fi
@@ -114,11 +214,7 @@ check_service_details() {
     
     if ! systemctl is-active --quiet "$service_name"; then
         echo -e "\033[0;31m服务未运行\033[0m"
-        read -n 1 -s -r -p "按任意键继续... (q退出)" key
-        if [ "$key" = "q" ]; then
-            echo -e "\n退出查看"
-            return
-        fi
+        show_service_diagnostics
         return
     fi
 
@@ -148,24 +244,19 @@ deploy_realm() {
     mkdir -p /root/realm
     cd /root/realm || exit
     
-    # 下载最新版本
+    # 下载最新版本（自动识别CPU架构）
     echo "正在下载realm..."
-    if ! wget -q --show-progress https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz; then
-        echo -e "\033[0;31m下载失败\033[0m"
-        read -n 1 -s -r -p "按任意键继续..."
-        return 1
-    fi
-    
-    # 验证下载文件
-    if [ ! -f "realm-x86_64-unknown-linux-musl.tar.gz" ]; then
-        echo -e "\033[0;31m下载文件不存在\033[0m"
+    local downloaded_file
+    downloaded_file=$(download_realm_asset "latest" "musl" | tail -n1)
+    if [ -z "$downloaded_file" ] || [ ! -f "$downloaded_file" ]; then
+        echo -e "\033[0;31m下载失败，请检查网络或稍后重试\033[0m"
         read -n 1 -s -r -p "按任意键继续..."
         return 1
     fi
     
     # 解压文件
     echo "正在解压文件..."
-    if ! tar -xzf realm-x86_64-unknown-linux-musl.tar.gz; then
+    if ! tar -xzf "$downloaded_file"; then
         echo -e "\033[0;31m解压失败\033[0m"
         read -n 1 -s -r -p "按任意键继续..."
         return 1
@@ -181,6 +272,26 @@ deploy_realm() {
     # 设置执行权限
     chmod +x realm
     
+    # 自检：确认可执行文件能在当前系统上正常运行，否则自动尝试 gnu 版本
+    if ! self_test_realm_binary "./realm"; then
+        echo -e "\033[1;33mmusl版本运行异常，尝试改用 gnu 版本（需系统自带glibc）...\033[0m"
+        rm -f "$downloaded_file" realm
+        downloaded_file=$(download_realm_asset "latest" "gnu" | tail -n1)
+        if [ -z "$downloaded_file" ] || [ ! -f "$downloaded_file" ]; then
+            echo -e "\033[0;31mgnu版本下载失败，安装中止\033[0m"
+            read -n 1 -s -r -p "按任意键继续..."
+            return 1
+        fi
+        tar -xzf "$downloaded_file"
+        chmod +x realm
+        if ! self_test_realm_binary "./realm"; then
+            echo -e "\033[0;31mgnu版本仍然运行异常，可能是系统环境不兼容，请手动排查（如CPU指令集、glibc版本等）\033[0m"
+            read -n 1 -s -r -p "按任意键继续..."
+            return 1
+        fi
+        echo -e "\033[0;32mgnu版本运行正常，继续安装\033[0m"
+    fi
+    
     # 获取版本号
     local version=$(get_realm_version)
     
@@ -189,13 +300,15 @@ deploy_realm() {
     cat > /etc/systemd/system/realm.service << 'EOF'
 [Unit]
 Description=realm
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 Restart=always
 RestartSec=5
+StartLimitIntervalSec=0
 ExecStart=/root/realm/realm -c /root/realm/config.toml
 LimitNOFILE=1048576
 
@@ -220,12 +333,20 @@ EOF
     systemctl enable realm
     if ! systemctl start realm; then
         echo -e "\033[0;31m服务启动失败\033[0m"
-        read -n 1 -s -r -p "按任意键继续..."
+        show_service_diagnostics
+        return 1
+    fi
+
+    # 二次确认服务确实处于运行状态（覆盖启动后瞬间崩溃、被systemd标记失败等情况）
+    sleep 1
+    if ! systemctl is-active --quiet realm; then
+        echo -e "\033[0;31m服务未能保持运行状态\033[0m"
+        show_service_diagnostics
         return 1
     fi
     
     # 清理下载文件
-    rm -f realm-x86_64-unknown-linux-musl.tar.gz
+    rm -f "$downloaded_file"
     
     echo -e "\n安装完成！"
     echo "=================="
@@ -357,10 +478,12 @@ backup_restore_config() {
                 if systemctl is-active --quiet realm; then
                     echo "正在重启realm服务..."
                     systemctl restart realm
-                    if [ $? -eq 0 ]; then
+                    sleep 1
+                    if systemctl is-active --quiet realm; then
                         echo -e "\033[0;32m服务已重启\033[0m"
                     else
                         echo -e "\033[0;31m服务重启失败\033[0m"
+                        show_service_diagnostics
                     fi
                 fi
             else
@@ -516,8 +639,11 @@ remote = \"$remote_addr:$remote_port\"" >> "/root/realm/config.toml"
         
         # 重启服务以应用更改
         echo "正在重启服务以应用更改..."
-        if ! systemctl restart realm; then
+        systemctl restart realm
+        sleep 1
+        if ! systemctl is-active --quiet realm; then
             echo -e "\033[0;31m警告：服务重启失败，请手动重启服务\033[0m"
+            show_service_diagnostics
         else
             echo -e "\033[0;32m服务已重启\033[0m"
             rm -f "/root/realm/config.toml.bak"
@@ -741,8 +867,11 @@ remote = \"$remote\"" >> "$temp_file"
     
     # 重启服务以应用更改
     echo "正在重启服务以应用更改..."
-    if ! systemctl restart realm; then
+    systemctl restart realm
+    sleep 1
+    if ! systemctl is-active --quiet realm; then
         echo -e "\033[0;31m警告：服务重启失败，请手动重启服务\033[0m"
+        show_service_diagnostics
     else
         echo -e "\033[0;32m服务已重启\033[0m"
     fi
@@ -754,7 +883,14 @@ remote = \"$remote\"" >> "$temp_file"
 start_service() {
     if ! systemctl is-active --quiet realm; then
         systemctl start realm
-        echo "realm 服务已启动"
+        sleep 1
+        if systemctl is-active --quiet realm; then
+            echo "realm 服务已启动"
+        else
+            echo -e "\033[0;31mrealm 服务启动失败\033[0m"
+            show_service_diagnostics
+            return
+        fi
     else
         echo "realm 服务已经在运行中"
     fi
@@ -785,7 +921,14 @@ restart_service() {
         read -p "确定要重启服务吗？(y/n): " confirm
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
             systemctl restart realm
-            echo "realm 服务已重启"
+            sleep 1
+            if systemctl is-active --quiet realm; then
+                echo "realm 服务已重启"
+            else
+                echo -e "\033[0;31mrealm 服务重启失败\033[0m"
+                show_service_diagnostics
+                return
+            fi
         else
             echo "取消重启操作"
         fi
@@ -794,7 +937,14 @@ restart_service() {
         read -p "确定要启动服务吗？(y/n): " confirm
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
             systemctl start realm
-            echo "realm 服务已启动"
+            sleep 1
+            if systemctl is-active --quiet realm; then
+                echo "realm 服务已启动"
+            else
+                echo -e "\033[0;31mrealm 服务启动失败\033[0m"
+                show_service_diagnostics
+                return
+            fi
         else
             echo "取消启动操作"
         fi
@@ -959,23 +1109,15 @@ check_realm_update() {
         return 1
     }
     
-    # 构造指定版本的下载URL
+    # 下载指定版本（自动识别CPU架构；失败则回退到latest链接）
     echo "正在从GitHub下载Realm版本: $latest_version"
-    # 不再使用latest/download链接，而是直接指定版本
-    local download_url="https://github.com/zhboner/realm/releases/download/v${latest_version}/realm-x86_64-unknown-linux-musl.tar.gz"
-    echo "下载URL: $download_url"
-    
-    if ! curl -L --progress-bar -o realm-x86_64-unknown-linux-musl.tar.gz "$download_url"; then
-        echo -e "\033[0;31m下载失败，curl返回代码: $?\033[0m"
-        
-        # 如果特定版本下载失败，尝试使用latest链接作为备选
-        echo "尝试使用latest链接作为备选..."
-        local fallback_url="https://github.com/zhboner/realm/releases/latest/download/realm-x86_64-unknown-linux-musl.tar.gz"
-        echo "备选URL: $fallback_url"
-        
-        if ! curl -L --progress-bar -o realm-x86_64-unknown-linux-musl.tar.gz "$fallback_url"; then
-            echo -e "\033[0;31m备选下载也失败，curl返回代码: $?\033[0m"
-            ls -la
+    local downloaded_file
+    downloaded_file=$(download_realm_asset "$latest_version" "musl" | tail -n1)
+    if [ -z "$downloaded_file" ] || [ ! -f "$downloaded_file" ]; then
+        echo -e "\033[0;31m下载失败，尝试使用latest链接作为备选...\033[0m"
+        downloaded_file=$(download_realm_asset "latest" "musl" | tail -n1)
+        if [ -z "$downloaded_file" ] || [ ! -f "$downloaded_file" ]; then
+            echo -e "\033[0;31m备选下载也失败\033[0m"
             rm -rf "$temp_dir"
             cd - > /dev/null
             return 1
@@ -983,11 +1125,10 @@ check_realm_update() {
     fi
     
     # 检查下载文件大小
-    local file_size=$(du -b realm-x86_64-unknown-linux-musl.tar.gz | cut -f1)
+    local file_size=$(du -b "$downloaded_file" | cut -f1)
     echo "下载文件大小: $file_size 字节"
     if [ "$file_size" -lt 1000000 ]; then  # 假设正常文件至少有1MB
         echo -e "\033[0;31m下载文件大小异常，可能下载不完整\033[0m"
-        cat realm-x86_64-unknown-linux-musl.tar.gz | head -c 100
         rm -rf "$temp_dir"
         cd - > /dev/null
         return 1
@@ -995,17 +1136,13 @@ check_realm_update() {
     
     # 解压文件
     echo "正在解压文件..."
-    if ! tar -xzf realm-x86_64-unknown-linux-musl.tar.gz; then
+    if ! tar -xzf "$downloaded_file"; then
         echo -e "\033[0;31m解压失败，tar返回代码: $?\033[0m"
         ls -la
         rm -rf "$temp_dir"
         cd - > /dev/null
         return 1
     fi
-    
-    # 列出解压后的文件
-    echo "解压后的文件列表:"
-    ls -la
     
     # 验证解压后的文件
     if [ ! -f "realm" ]; then
@@ -1015,24 +1152,31 @@ check_realm_update() {
         return 1
     fi
     
-    # 检查文件是否有执行权限（无需使用file命令）
-    if [ ! -x "realm" ]; then
-        echo -e "\033[0;31mRealm文件没有执行权限\033[0m"
-        ls -la realm
+    chmod +x realm
+
+    # 自检新版本可执行文件是否能在当前系统正常运行，异常则自动尝试gnu版本
+    if ! self_test_realm_binary "./realm"; then
+        echo -e "\033[1;33m新版本musl可执行文件运行异常，尝试改用gnu版本...\033[0m"
+        rm -f "$downloaded_file" realm
+        downloaded_file=$(download_realm_asset "$latest_version" "gnu" | tail -n1)
+        if [ -z "$downloaded_file" ] || [ ! -f "$downloaded_file" ]; then
+            downloaded_file=$(download_realm_asset "latest" "gnu" | tail -n1)
+        fi
+        if [ -z "$downloaded_file" ] || [ ! -f "$downloaded_file" ]; then
+            echo -e "\033[0;31mgnu版本下载失败，更新中止（旧版本未受影响）\033[0m"
+            rm -rf "$temp_dir"
+            cd - > /dev/null
+            return 1
+        fi
+        tar -xzf "$downloaded_file"
         chmod +x realm
-        echo "已添加执行权限"
-    else
-        echo "Realm文件具有执行权限"
-    fi
-    
-    # 检查文件大小，确保不是空文件或过小的文件
-    local realm_size=$(wc -c < realm)
-    echo "Realm文件大小: $realm_size 字节"
-    if [ "$realm_size" -lt 1000000 ]; then  # 假设正常文件至少有1MB
-        echo -e "\033[0;31mRealm文件异常，文件过小\033[0m"
-        rm -rf "$temp_dir"
-        cd - > /dev/null
-        return 1
+        if ! self_test_realm_binary "./realm"; then
+            echo -e "\033[0;31m新版本在本机运行异常（musl与gnu均失败），已中止更新，旧版本继续运行\033[0m"
+            rm -rf "$temp_dir"
+            cd - > /dev/null
+            return 1
+        fi
+        echo -e "\033[0;32mgnu版本自检通过，继续更新\033[0m"
     fi
     
     # 停止服务
@@ -1051,17 +1195,6 @@ check_realm_update() {
     if [ -f "/root/realm/realm" ]; then
         echo "备份原Realm文件..."
         cp -f "/root/realm/realm" "/root/realm/realm.bak"
-        
-        # 验证MD5，确保是不同的文件
-        local old_md5=$(md5sum "/root/realm/realm.bak" | awk '{print $1}')
-        local new_md5=$(md5sum "realm" | awk '{print $1}')
-        
-        echo "原文件MD5: $old_md5"
-        echo "新文件MD5: $new_md5"
-        
-        if [ "$old_md5" = "$new_md5" ]; then
-            echo -e "\033[0;33m警告：新旧文件MD5相同，可能已经是最新版本\033[0m"
-        fi
     fi
     
     # 确保目标文件夹存在且可写
@@ -1076,44 +1209,10 @@ check_realm_update() {
         rm -f /root/realm/realm
     fi
     
-    # 替换可执行文件 - 使用两种方式确保成功
+    # 替换可执行文件
     echo "正在替换realm可执行文件..."
-    # 方式1：使用cp命令
     if ! cp -f "realm" "/root/realm/realm"; then
-        echo -e "\033[0;31mcp命令替换文件失败，尝试使用cat方式...\033[0m"
-        # 方式2：使用cat命令
-        if ! cat "realm" > "/root/realm/realm"; then
-            echo -e "\033[0;31m替换文件失败，恢复原文件\033[0m"
-            if [ -f "/root/realm/realm.bak" ]; then
-                cp -f "/root/realm/realm.bak" "/root/realm/realm"
-            fi
-            rm -rf "$temp_dir"
-            cd - > /dev/null
-            systemctl start realm
-            return 1
-        fi
-    fi
-    
-    # 检查文件是否成功复制
-    if [ ! -f "/root/realm/realm" ]; then
-        echo -e "\033[0;31m复制后目标文件不存在\033[0m"
-        if [ -f "/root/realm/realm.bak" ]; then
-            cp -f "/root/realm/realm.bak" "/root/realm/realm"
-        fi
-        rm -rf "$temp_dir"
-        cd - > /dev/null
-        systemctl start realm
-        return 1
-    fi
-    
-    # 比较文件大小
-    local src_size=$(wc -c < "realm")
-    local dst_size=$(wc -c < "/root/realm/realm")
-    echo "源文件大小: $src_size 字节"
-    echo "目标文件大小: $dst_size 字节"
-    
-    if [ "$src_size" != "$dst_size" ]; then
-        echo -e "\033[0;31m文件大小不匹配，复制可能不完整\033[0m"
+        echo -e "\033[0;31m复制文件失败，恢复原文件\033[0m"
         if [ -f "/root/realm/realm.bak" ]; then
             cp -f "/root/realm/realm.bak" "/root/realm/realm"
         fi
@@ -1135,7 +1234,7 @@ check_realm_update() {
     # 检查服务是否成功启动
     if ! systemctl is-active --quiet realm; then
         echo -e "\033[0;31m服务启动失败\033[0m"
-        systemctl status realm --no-pager
+        show_service_diagnostics
         
         # 尝试恢复原文件
         if [ -f "/root/realm/realm.bak" ]; then
@@ -1143,7 +1242,13 @@ check_realm_update() {
             cp -f "/root/realm/realm.bak" "/root/realm/realm"
             chmod +x /root/realm/realm
             systemctl start realm
+            sleep 1
+            if systemctl is-active --quiet realm; then
+                echo -e "\033[0;32m已回滚到旧版本并成功启动\033[0m"
+            fi
         fi
+    else
+        rm -f "/root/realm/realm.bak"
     fi
     
     # 清理
@@ -1151,18 +1256,10 @@ check_realm_update() {
     rm -rf "$temp_dir"
     cd - > /dev/null
     
-    # 验证新版本 - 多次尝试获取版本号
+    # 验证新版本
     echo "等待服务完全启动..."
-    sleep 5
-    local new_version=""
-    for i in {1..3}; do
-        new_version=$(get_realm_version)
-        if [ ! -z "$new_version" ] && [ "$new_version" != "未知" ]; then
-            break
-        fi
-        echo "尝试第 $i 次获取版本号..."
-        sleep 2
-    done
+    sleep 3
+    local new_version=$(get_realm_version)
     
     # 输出结果
     echo -e "\n=================="
@@ -1171,17 +1268,6 @@ check_realm_update() {
     echo -e "新版本: \033[0;32m$new_version\033[0m"
     echo -e "服务状态: \033[0;32m$(check_realm_service_status)\033[0m"
     echo "=================="
-    
-    # 显示版本详情
-    echo "直接检查版本详情:"
-    /root/realm/realm -v
-    
-    # 验证版本是否确实更新
-    if [ "$new_version" = "$current_version" ]; then
-        echo -e "\033[0;31m警告：版本似乎没有更新，更新可能失败\033[0m"
-        echo "尝试手动运行: /root/realm/realm -v 查看实际版本"
-        return 1
-    fi
     
     return 0
 }
@@ -1378,7 +1464,8 @@ manage_autostart() {
     read -n 1 -s -r -p "按任意键继续..."
 }
 
-# 验证配置文件格式
+# 验证配置文件格式（本脚本生成的配置使用 [[endpoints]] + listen/remote 字段，
+# 而不是 port 字段，此前的校验逻辑写反了会导致恢复备份必然失败，这里予以修正）
 verify_config() {
     local config_file="$1"
     # 检查文件是否为空
@@ -1386,8 +1473,11 @@ verify_config() {
         return 1
     fi
     
-    # 检查基本的TOML格式（检查是否包含必要的字段）
-    if ! grep -q "^\[.*\]" "$config_file" || ! grep -q "^port.*=.*[0-9]" "$config_file"; then
+    # 检查基本的TOML格式：至少要有一个 [[endpoints]] 分段，并且包含 listen 和 remote 字段
+    if ! grep -q "\[\[endpoints\]\]" "$config_file"; then
+        return 1
+    fi
+    if ! grep -q "^[[:space:]]*listen[[:space:]]*=" "$config_file" || ! grep -q "^[[:space:]]*remote[[:space:]]*=" "$config_file"; then
         return 1
     fi
     
@@ -1455,7 +1545,7 @@ show_menu() {
     echo -e "${CYAN}${BOLD}系统管理${NC}"
     echo -e "  ${GREEN}9${NC}. 一键卸载          ${GREEN}10${NC}. 检查更新"
     echo -e "  ${GREEN}11${NC}. 备份配置         ${GREEN}12${NC}. 恢复配置"
-    echo -e "  ${GREEN}13${NC}. 其他选项"
+    echo -e "  ${GREEN}13${NC}. 其他选项         ${GREEN}14${NC}. 查看服务日志/诊断"
     echo
     
     # 退出选项
@@ -1583,6 +1673,14 @@ while true; do
                         ;;
                 esac
             done
+            ;;
+        14)
+            if [ ! -f "/root/realm/realm" ]; then
+                echo -e "${RED}Realm 未安装${NC}"
+                read -n 1 -s -r -p "按任意键继续..."
+                continue
+            fi
+            show_service_diagnostics
             ;;
         0)
             echo -e "${GREEN}感谢使用！${NC}"
