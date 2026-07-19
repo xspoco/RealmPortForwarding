@@ -1,15 +1,12 @@
 #!/bin/bash
 
-VERSION="1.8.4"
+VERSION="1.8.5"
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 [ ! -f "$SCRIPT_PATH" ] && SCRIPT_PATH="$0"
 
 GREEN="\033[0;32m"; YELLOW="\033[1;33m"; RED="\033[0;31m"
 CYAN="\033[0;36m"; NC="\033[0m"; BOLD="\033[1m"; UNDERLINE="\033[4m"
-
-realm_status="未安装"
-realm_status_color="$RED"
 
 compare_versions() {
     local v1=${1#v} v2=${2#v}
@@ -25,10 +22,6 @@ compare_versions() {
 
 [ "$EUID" -ne 0 ] && { echo "需要 root 权限"; exit 1; }
 
-if [ -f "/root/realm/realm" ]; then
-    realm_status="已安装"; realm_status_color="$GREEN"
-fi
-
 detect_realm_asset() {
     local libc=${1:-musl} m; m=$(uname -m)
     case "$m" in
@@ -39,7 +32,6 @@ detect_realm_asset() {
     esac
 }
 
-# 修复点7：curl 失败再尝试 wget，且检测空文件
 download_realm_asset() {
     local version="$1" libc="${2:-musl}"
     local asset; asset=$(detect_realm_asset "$libc")
@@ -79,7 +71,6 @@ show_service_diagnostics() {
     echo "---- journalctl -u realm (最近20行) ----"
     journalctl -u realm --no-pager -n 20 2>&1
     [ -f /root/realm/config.toml ] && { echo "配置文件："; head -n 40 /root/realm/config.toml; }
-    read -n 1 -s -r -p "按任意键继续..."
 }
 
 get_realm_version() {
@@ -98,7 +89,6 @@ check_realm_service_status() {
     fi
 }
 
-# 修复点2：统一的配置初始化函数，确保始终有顶层 endpoints = []
 init_realm_config() {
     local cfg="/root/realm/config.toml"
     if [ ! -f "$cfg" ]; then
@@ -111,7 +101,6 @@ use_udp = true
 EOF
         return 0
     fi
-    # 自愈：补 endpoints = [] 到文件最前
     if ! grep -qE "^[[:space:]]*endpoints[[:space:]]*=" "$cfg" && ! grep -q "\[\[endpoints\]\]" "$cfg"; then
         { echo "endpoints = []"; echo; cat "$cfg"; } > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
     fi
@@ -119,7 +108,7 @@ EOF
 
 deploy_realm() {
     if [ -f /root/realm/realm ]; then
-        read -p "已安装 realm，重新安装？:" c
+        read -p "已安装 realm，重新安装? [y/N]: " c
         [[ ! "$c" =~ ^[Yy]$ ]] && return
     fi
     echo "开始安装 realm..."
@@ -133,7 +122,6 @@ deploy_realm() {
         echo -e "${RED}下载失败${NC}"; cd "$old"; return 1
     fi
 
-    # 修复点6：先存退出码再判断
     tar -xzf "$f"; local rc=$?
     if [ $rc -ne 0 ]; then
         echo -e "${RED}解压失败 (tar rc=$rc)${NC}"; cd "$old"; return 1
@@ -170,7 +158,7 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
-    init_realm_config   # 修复点2：统一调用
+    init_realm_config
     systemctl daemon-reload
     systemctl enable realm
     systemctl start realm || { show_service_diagnostics; cd "$old"; return 1; }
@@ -179,7 +167,6 @@ EOF
     rm -f "$f"
     echo -e "\n${GREEN}安装完成！ 版本: $(get_realm_version)${NC}"
     cd "$old"
-    read -n 1 -s -r -p "按任意键继续..."
 }
 
 backup_config() {
@@ -231,7 +218,6 @@ validate_port() {
     [[ $p =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]
 }
 
-# 修复点2：add_forward 中始终保留 endpoints = [] 头部
 add_forward() {
     echo -e "\n添加转发规则 (输入 q 退出)"
     local la lp ra rp cm
@@ -262,13 +248,11 @@ add_forward() {
     done
     read -p "备注(可选): " cm
 
-    read -p "确认添加 $la:$lp -> $ra:$rp ?:" c
+    read -p "确认添加 $la:$lp -> $ra:$rp ? [y/N]: " c
     [[ ! "$c" =~ ^[Yy]$ ]] && return
 
     local cfg=/root/realm/config.toml
     [ -f "$cfg" ] && cp "$cfg" "$cfg.bak" || init_realm_config
-
-    # 修复点2：确保有顶层 endpoints 字段（空数组形式由 init 保证）
     init_realm_config
 
     {
@@ -288,7 +272,6 @@ add_forward() {
         [ -f "$cfg.bak" ] && mv "$cfg.bak" "$cfg"
         show_service_diagnostics
     fi
-    read -n 1 -s -r -p "按任意键继续..."
 }
 
 show_forwards() {
@@ -305,10 +288,8 @@ show_forwards() {
         if (listen && remote) { n++; printf "%d) %s -> %s%s\n", n, listen, remote, (comment?" ["comment"]":"") }
         if (n==0) print "无转发规则"
     }' /root/realm/config.toml
-    read -n 1 -s -r -p "按任意键继续..."
 }
 
-# 修复点1：用 wc -l 替代 exit 退出码
 delete_forward() {
     local cfg=/root/realm/config.toml
     [ -f "$cfg" ] || { echo "无配置文件"; return; }
@@ -338,7 +319,6 @@ delete_forward() {
 
     cp "$cfg" "$cfg.bak"
 
-    # 修复点2：始终先写顶层 endpoints = []
     {
         echo "endpoints = []"
         echo ""
@@ -364,16 +344,15 @@ delete_forward() {
     rm -f "$rf" "$cfg.bak"
     systemctl restart realm; sleep 1
     systemctl is-active --quiet realm && echo -e "${GREEN}已删除并重启${NC}" || show_service_diagnostics
-    read -n 1 -s -r -p "按任意键继续..."
 }
 
 start_service()   { systemctl is-active --quiet realm && echo "已在运行" || { systemctl start realm; sleep 1; systemctl is-active --quiet realm && echo "已启动" || show_service_diagnostics; }; }
-stop_service()    { systemctl is-active --quiet realm && { read -p "确认停止?: " c; [[ "$c" =~ ^[Yy]$ ]] && systemctl stop realm && echo "已停止"; } || echo "未运行"; }
+stop_service()    { systemctl is-active --quiet realm && { read -p "确认停止? [y/N]: " c; [[ "$c" =~ ^[Yy]$ ]] && systemctl stop realm && echo "已停止"; } || echo "未运行"; }
 restart_service() { systemctl restart realm; sleep 1; systemctl is-active --quiet realm && echo "已重启" || show_service_diagnostics; }
 
 uninstall_realm() {
-    read -p "确认卸载?:" c; [[ ! "$c" =~ ^[Yy]$ ]] && return
-    read -p "再次确认?:" c2; [[ ! "$c2" =~ ^[Yy]$ ]] && return
+    read -p "确认卸载? [y/N]: " c; [[ ! "$c" =~ ^[Yy]$ ]] && return
+    read -p "再次确认? [y/N]: " c2; [[ ! "$c2" =~ ^[Yy]$ ]] && return
     [ -f /root/realm/config.toml ] && backup_config
     systemctl stop realm 2>/dev/null
     systemctl disable realm 2>/dev/null
@@ -382,12 +361,9 @@ uninstall_realm() {
     [ -d /root/realm/backups ] && mv /root/realm/backups /root/realm_bak
     rm -rf /root/realm
     [ -d /root/realm_bak ] && mv /root/realm_bak /root/realm/backups
-    realm_status="未安装"; realm_status_color="$RED"
     echo -e "${GREEN}卸载完成${NC}"
-    read -n 1 -s -r -p "按任意键继续..."
 }
 
-# 修复点4：local 与赋值分开，正确捕获 curl 退出码
 check_realm_update() {
     local old; old=$(pwd)
     [ -f /root/realm/realm ] || { echo "未安装"; return 1; }
@@ -408,8 +384,8 @@ check_realm_update() {
     local confirm="N"
     case $cmp in
         0) echo -e "${GREEN}已是最新${NC}"; return 0 ;;
-        1) read -p "本地更新，仍更新到远程?: " confirm ;;
-        2) read -p "发现新版本，更新?: " confirm ;;
+        1) read -p "本地更新，仍更新到远程? [y/N]: " confirm ;;
+        2) read -p "发现新版本，更新? [y/N]: " confirm ;;
     esac
     [[ ! "$confirm" =~ ^[Yy]$ ]] && return 0
 
@@ -469,7 +445,7 @@ update_script() {
     if ! curl -s -H "Cache-Control: no-cache" -o "$tf" "https://raw.githubusercontent.com/xspoco/RealmPortForwarding/refs/heads/main/RealmOneKey.sh?_=$ts"; then
         echo -e "${RED}脚本下载失败${NC}"
         [ -f /root/realm/realm ] && check_realm_update
-        read -n 1 -s -r -p "按任意键继续..."; return 1
+        return 1
     fi
     [ -s "$tf" ] || { echo -e "${RED}下载为空${NC}"; rm -f "$tf"; return 1; }
     local rv; rv=$(grep '^VERSION=' "$tf" | cut -d'"' -f2)
@@ -479,8 +455,8 @@ update_script() {
     local cmp=$? update="false"
     case $cmp in
         0) echo "已是最新" ;;
-        1) read -p "本地更新，仍更新?: " c; [[ "$c" =~ ^[Yy]$ ]] && update="true" ;;
-        2) read -p "发现新版本，更新?: " c; [[ "$c" =~ ^[Yy]$ ]] && update="true" ;;
+        1) read -p "本地更新，仍更新? [y/N]: " c; [[ "$c" =~ ^[Yy]$ ]] && update="true" ;;
+        2) read -p "发现新版本，更新? [y/N]: " c; [[ "$c" =~ ^[Yy]$ ]] && update="true" ;;
     esac
     if [ "$update" = "true" ]; then
         [ -f /root/realm/config.toml ] && backup_config
@@ -491,7 +467,6 @@ update_script() {
     else
         rm -f "$tf"
         [ -f /root/realm/realm ] && check_realm_update
-        read -n 1 -s -r -p "按任意键继续..."
     fi
 }
 
@@ -509,9 +484,17 @@ verify_config() {
 
 show_menu() {
     clear
+    local r_status r_color
+    # 修复点1：每次刷新菜单实时检测安装状态
+    if [ -f "/root/realm/realm" ]; then
+        r_status="已安装"; r_color="$GREEN"
+    else
+        r_status="未安装"; r_color="$RED"
+    fi
+    
     echo -e "\n${YELLOW}${BOLD}Realm 一键转发脚本 ${NC}${YELLOW}v${VERSION}${NC}\n"
     echo -e "${UNDERLINE}系统状态${NC}"
-    echo -e "  运行状态: ${realm_status_color}${realm_status}${NC}"
+    echo -e "  运行状态: ${r_color}${r_status}${NC}"
     echo -e "  转发状态: $(check_realm_service_status)"
     echo -e "  Realm 版本: $(get_realm_version)"
     echo
@@ -532,6 +515,7 @@ show_menu() {
 while true; do
     show_menu
     read -r choice
+    echo
     case $choice in
         1) deploy_realm ;;
         2) [ -f /root/realm/realm ] && add_forward || echo -e "${RED}请先安装${NC}" ;;
@@ -540,7 +524,7 @@ while true; do
         5) [ -f /root/realm/realm ] && start_service || echo -e "${RED}请先安装${NC}" ;;
         6) [ -f /root/realm/realm ] && stop_service || echo -e "${RED}请先安装${NC}" ;;
         7) [ -f /root/realm/realm ] && restart_service || echo -e "${RED}请先安装${NC}" ;;
-        8) [ -f /root/realm/realm ] && { systemctl status --no-pager realm; read -n 1 -s -r; } || echo -e "${RED}请先安装${NC}" ;;
+        8) [ -f /root/realm/realm ] && { systemctl status --no-pager realm; } || echo -e "${RED}请先安装${NC}" ;;
         9) [ -f /root/realm/realm ] && uninstall_realm || echo -e "${RED}无需卸载${NC}" ;;
         10) update_script ;;
         11) [ -f /root/realm/config.toml ] && backup_config || echo -e "${RED}无配置文件${NC}" ;;
@@ -552,15 +536,17 @@ while true; do
                 echo -e "  ${RED}q${NC}. 返回"
                 read -r sc
                 case $sc in
-                    1) systemctl enable realm ;;
-                    2) systemctl disable realm ;;
+                    1) systemctl enable realm && echo -e "${GREEN}已启用${NC}" ;;
+                    2) systemctl disable realm && echo -e "${GREEN}已禁用${NC}" ;;
                     q) break ;;
                     *) echo -e "${RED}无效${NC}" ;;
                 esac
-            done ;;
+            done
+            continue ;;
         14) [ -f /root/realm/realm ] && show_service_diagnostics || echo -e "${RED}未安装${NC}" ;;
         0) echo -e "${GREEN}感谢使用${NC}"; exit 0 ;;
         *) echo -e "${RED}无效选项${NC}" ;;
     esac
-    [ "$choice" != "13" ] && [ "$choice" != "0" ] && read -n 1 -s -r -p "按任意键继续..."
+    # 修复点2：统一在此处等待按键，避免函数内部多次提示
+    read -n 1 -s -r -p "按任意键继续..."
 done
