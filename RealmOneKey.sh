@@ -1,7 +1,16 @@
 #!/bin/bash
 
 # 当前脚本版本号
-VERSION="1.8.0"
+VERSION="1.8.1"
+
+# 记录脚本自身的绝对路径。脚本运行过程中（如部署/更新功能）会 cd 到其他目录，
+# 若后续仍用相对的 $0 操作自身文件会因当前目录已变化而找不到文件，
+# 因此这里统一解析为绝对路径，后续一律使用 SCRIPT_PATH。
+SCRIPT_PATH="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
+if [ ! -f "$SCRIPT_PATH" ]; then
+    # 兜底：某些执行方式（如管道运行）下 dirname/basename 可能拿不到真实路径
+    SCRIPT_PATH="$0"
+fi
 
 # 定义颜色变量
 GREEN="\033[0;32m"
@@ -239,6 +248,11 @@ deploy_realm() {
     fi
 
     echo "开始安装realm..."
+    
+    # 记录调用前的目录，函数结束前会切回，避免影响脚本后续操作（如自更新时的相对路径）
+    local __deploy_start_dir
+    __deploy_start_dir=$(pwd)
+    trap 'cd "$__deploy_start_dir" 2>/dev/null; trap - RETURN' RETURN
     
     # 创建目录
     mkdir -p /root/realm
@@ -1040,6 +1054,9 @@ uninstall_realm() {
 
 # 检查Realm更新的函数
 check_realm_update() {
+    local __update_start_dir
+    __update_start_dir=$(pwd)
+    trap 'cd "$__update_start_dir" 2>/dev/null; trap - RETURN' RETURN
     echo "正在检查Realm更新..."
     
     # 获取当前安装的realm版本
@@ -1381,10 +1398,10 @@ update_script() {
         if [ -f "$config_file" ]; then
             backup_config
         fi
-        cp "$0" "${0}.backup"
+        cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup"
         
         # 替换当前脚本
-        if ! mv "$temp_file" "$0"; then
+        if ! mv "$temp_file" "$SCRIPT_PATH"; then
             echo "更新失败：无法替换脚本文件"
             rm -f "$temp_file"
             
@@ -1399,13 +1416,13 @@ update_script() {
             return 1
         fi
         
-        chmod +x "$0"
+        chmod +x "$SCRIPT_PATH"
         echo "脚本已更新完成！"
         
         # 如果不需要检查realm更新，或者realm未安装，直接重启脚本
         if [ "$check_realm" != "true" ] || [ ! -f "/root/realm/realm" ]; then
             echo "正在重启脚本..."
-            exec "$0"
+            exec "$SCRIPT_PATH"
             exit 0
         fi
     else
@@ -1423,7 +1440,7 @@ update_script() {
     # 如果脚本已更新，重启脚本
     if [ "$update_script" = "true" ]; then
         echo "正在重启脚本..."
-        exec "$0"
+        exec "$SCRIPT_PATH"
         exit 0
     elif [ "$update_any" = "true" ]; then
         read -n 1 -s -r -p "按任意键继续..."
