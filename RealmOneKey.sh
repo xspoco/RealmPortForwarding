@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="1.8.7"
+VERSION="1.8.8"
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 [ ! -f "$SCRIPT_PATH" ] && SCRIPT_PATH="$0"
@@ -90,7 +90,6 @@ check_realm_service_status() {
     if systemctl is-active --quiet realm; then
         echo -e "\033[0;32m运行中\033[0m"; return 0
     else
-        # 修复点：如果没有转发规则，realm会自动退出，这里明确提示原因
         if [ -f /root/realm/config.toml ] && ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
             echo -e "\033[0;33m未运行(无规则)${NC}"
         else
@@ -184,7 +183,6 @@ EOF
     systemctl start realm
     sleep 2
     
-    # 修复点：如果没有规则，允许正常退出不算作失败
     if ! systemctl is-active --quiet realm; then
         if ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
             echo -e "${YELLOW}提示：由于尚未添加任何转发规则，Realm 服务启动后自动退出，属正常现象。${NC}"
@@ -515,12 +513,12 @@ restart_service() {
 
 uninstall_realm() {
     echo "准备卸载realm..."
-    read -p "确定要卸载realm吗？这将删除所有相关文件和配置(y/n): " c
+    read -p "确定要卸载realm吗？这将删除所有相关文件和配置: " c
     if [[ ! "$c" =~ ^[Yy]$ ]]; then
         echo "取消卸载"
         return 0
     fi
-    read -p "再次确认：所有数据将被删除，确认卸载？(y/n): " c2
+    read -p "再次确认：所有数据将被删除，确认卸载？(Y/N): " c2
     if [[ ! "$c2" =~ ^[Yy]$ ]]; then
         echo "取消卸载"
         return 0
@@ -536,7 +534,7 @@ uninstall_realm() {
     done
     if systemctl is-active --quiet realm; then
         echo -e "${RED}警告：服务无法完全停止${NC}"
-        read -p "是否强制继续卸载？(y/n): " force
+        read -p "是否强制继续卸载？(Y/N): " force
         if [[ ! "$force" =~ ^[Yy]$ ]]; then
             echo "取消卸载"
             return 0
@@ -549,7 +547,6 @@ uninstall_realm() {
     systemctl daemon-reload
 
     echo "删除realm程序和配置文件..."
-    # 修复点：正确处理备份目录的移动，避免报错
     if [ -d "/root/realm/backups" ]; then
         mv "/root/realm/backups" "/root/realm_backups"
     fi
@@ -660,7 +657,7 @@ check_realm_update() {
             [ -f /root/realm/realm.bak ] && { cp -f /root/realm/realm.bak /root/realm/realm; chmod +x /root/realm/realm; systemctl start realm; }
         fi
     else
-        rm -f /root/realm/realm.bak"
+        rm -f /root/realm/realm.bak
     fi
     
     cd "$old"; rm -rf "$td"
