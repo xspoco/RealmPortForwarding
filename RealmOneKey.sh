@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="1.8.6"
+VERSION="1.8.7"
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 [ ! -f "$SCRIPT_PATH" ] && SCRIPT_PATH="$0"
@@ -90,7 +90,13 @@ check_realm_service_status() {
     if systemctl is-active --quiet realm; then
         echo -e "\033[0;32m运行中\033[0m"; return 0
     else
-        echo -e "\033[0;31m未运行\033[0m"; return 1
+        # 修复点：如果没有转发规则，realm会自动退出，这里明确提示原因
+        if [ -f /root/realm/config.toml ] && ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
+            echo -e "\033[0;33m未运行(无规则)${NC}"
+        else
+            echo -e "\033[0;31m未运行\033[0m"
+        fi
+        return 1
     fi
 }
 
@@ -115,7 +121,10 @@ deploy_realm() {
     if [ -f /root/realm/realm ]; then
         echo "检测到已安装realm，是否重新安装？"
         read -p "输入 Y 确认重新安装，任意键取消: " c
-        [[ ! "$c" =~ ^[Yy]$ ]] && { echo "取消安装。"; return; }
+        if [[ ! "$c" =~ ^[Yy]$ ]]; then
+            echo "取消安装。"
+            return 0
+        fi
     fi
 
     echo "开始安装realm..."
@@ -172,13 +181,25 @@ EOF
     init_realm_config
     systemctl daemon-reload
     systemctl enable realm
-    if ! systemctl start realm; then
-        echo -e "${RED}服务启动失败${NC}"; show_service_diagnostics; cd "$old"; return 1
-    fi
-    sleep 1
+    systemctl start realm
+    sleep 2
+    
+    # 修复点：如果没有规则，允许正常退出不算作失败
     if ! systemctl is-active --quiet realm; then
-        echo -e "${RED}服务未能保持运行状态${NC}"; show_service_diagnostics; cd "$old"; return 1
+        if ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
+            echo -e "${YELLOW}提示：由于尚未添加任何转发规则，Realm 服务启动后自动退出，属正常现象。${NC}"
+            echo -e "${GREEN}安装完成！${NC}"
+            echo -e "请通过选项 2 添加转发规则，系统将自动启动服务。"
+            cd "$old"
+            return 0
+        else
+            echo -e "${RED}服务未能保持运行状态${NC}"
+            show_service_diagnostics
+            cd "$old"
+            return 1
+        fi
     fi
+    
     rm -f "$f"
     echo -e "\n${GREEN}安装完成！${NC}"
     echo "=================="
@@ -186,6 +207,7 @@ EOF
     echo -e "服务状态: ${GREEN}已启动${NC}"
     echo "=================="
     cd "$old"
+    return 0
 }
 
 backup_config() {
@@ -218,9 +240,12 @@ backup_restore_config() {
                 echo "$i) $(basename "$f") ($(date -r "$f" '+%F %T'))"; ((i++))
             done
             read -p "请选择要恢复的备份文件编号（输入q取消）: " c
-            [ "$c" = "q" ] && { echo "取消恢复"; return; }
-            [[ ! "$c" =~ ^[0-9]+$ ]] && return 1
-            [ "$c" -ge 1 ] && [ "$c" -le ${#files[@]} ] || return 1
+            if [ "$c" = "q" ]; then
+                echo "取消恢复"
+                return 0
+            fi
+            [[ ! "$c" =~ ^[0-9]+$ ]] && return 0
+            [ "$c" -ge 1 ] && [ "$c" -le ${#files[@]} ] || return 0
             local sel="${files[$((c-1))]}"
             verify_config "$sel" || { echo -e "${RED}错误：选择的备份文件格式无效${NC}"; return 1; }
             [ -f "$cfg" ] && cp "$cfg" "$cfg.$(date +%s).bak"
@@ -233,6 +258,7 @@ backup_restore_config() {
             fi
             ;;
     esac
+    return 0
 }
 
 validate_ip() {
@@ -253,26 +279,26 @@ add_forward() {
     local la lp ra rp cm
     while true; do
         read -p "请输入本地监听地址 (默认 0.0.0.0，输入 q 退出): " la
-        [ "$la" = "q" ] && { echo "取消添加转发规则。"; return; }
+        [ "$la" = "q" ] && { echo "取消添加转发规则。"; return 0; }
         [ -z "$la" ] && { la="0.0.0.0"; break; }
         validate_ip "$la" && break
         echo -e "${RED}无效的IP地址格式${NC}"
     done
     while true; do
         read -p "请输入本地端口 (1-65535，输入 q 退出): " lp
-        [ "$lp" = "q" ] && { echo "取消添加转发规则。"; return; }
+        [ "$lp" = "q" ] && { echo "取消添加转发规则。"; return 0; }
         validate_port "$lp" && break
         echo -e "${RED}无效的端口号${NC}"
     done
     while true; do
         read -p "请输入远程地址 (输入 q 退出): " ra
-        [ "$ra" = "q" ] && { echo "取消添加转发规则。"; return; }
+        [ "$ra" = "q" ] && { echo "取消添加转发规则。"; return 0; }
         validate_ip "$ra" && break
         echo -e "${RED}无效的IP地址格式${NC}"
     done
     while true; do
         read -p "请输入远程端口 (1-65535，输入 q 退出): " rp
-        [ "$rp" = "q" ] && { echo "取消添加转发规则。"; return; }
+        [ "$rp" = "q" ] && { echo "取消添加转发规则。"; return 0; }
         validate_port "$rp" && break
         echo -e "${RED}无效的端口号${NC}"
     done
@@ -282,7 +308,10 @@ add_forward() {
     echo "本地 $la:$lp -> 远程 $ra:$rp"
     [ -n "$cm" ] && echo "备注: $cm"
     read -p "确认添加？(Y/N): " c
-    [[ ! "$c" =~ ^[Yy]$ ]] && { echo "取消添加转发规则。"; return; }
+    if [[ ! "$c" =~ ^[Yy]$ ]]; then
+        echo "取消添加转发规则。"
+        return 0
+    fi
 
     local cfg=/root/realm/config.toml
     [ -f "$cfg" ] && cp "$cfg" "$cfg.bak" || init_realm_config
@@ -306,10 +335,11 @@ add_forward() {
         [ -f "$cfg.bak" ] && mv "$cfg.bak" "$cfg"
         show_service_diagnostics
     fi
+    return 0
 }
 
 show_forwards() {
-    [ -f /root/realm/config.toml ] || { echo "配置文件不存在，尚未添加任何转发规则。"; return; }
+    [ -f /root/realm/config.toml ] || { echo "配置文件不存在，尚未添加任何转发规则。"; return 0; }
     echo "当前所有转发规则："
     echo "=================="
     awk '
@@ -325,11 +355,12 @@ show_forwards() {
         if (n==0) print "没有发现任何转发规则。"
     }' /root/realm/config.toml
     echo "=================="
+    return 0
 }
 
 delete_forward() {
     local cfg=/root/realm/config.toml
-    [ -f "$cfg" ] || { echo "配置文件不存在，没有可删除的转发规则。"; return; }
+    [ -f "$cfg" ] || { echo "配置文件不存在，没有可删除的转发规则。"; return 0; }
     local tmp=$(mktemp) rf=$(mktemp)
 
     awk '
@@ -341,7 +372,7 @@ delete_forward() {
     ' "$cfg" > "$rf"
 
     local total; total=$(wc -l < "$rf")
-    [ "$total" -eq 0 ] && { echo "没有发现任何转发规则。"; rm -f "$tmp" "$rf"; return; }
+    [ "$total" -eq 0 ] && { echo "没有发现任何转发规则。"; rm -f "$tmp" "$rf"; return 0; }
 
     local i=1
     while IFS=$'\t' read -r l r c; do
@@ -352,9 +383,13 @@ delete_forward() {
 
     local choice
     read -p "请输入要删除的规则编号 (1-$total)，输入 q 取消: " choice
-    [ "$choice" = "q" ] && { echo "取消删除操作。"; rm -f "$tmp" "$rf"; return; }
-    [[ ! "$choice" =~ ^[0-9]+$ ]] && return
-    [ "$choice" -ge 1 ] && [ "$choice" -le "$total" ] || return
+    if [ "$choice" = "q" ]; then
+        echo "取消删除操作。"
+        rm -f "$tmp" "$rf"
+        return 0
+    fi
+    [[ ! "$choice" =~ ^[0-9]+$ ]] && return 0
+    [ "$choice" -ge 1 ] && [ "$choice" -le "$total" ] || return 0
 
     cp "$cfg" "$cfg.bak"
 
@@ -383,14 +418,24 @@ delete_forward() {
         echo -e "${RED}错误：无法更新配置文件，正在恢复备份...${NC}"
         mv "$cfg.bak" "$cfg"
         rm -f "$tmp" "$rf"
-        return 1
+        return 0
     fi
     rm -f "$rf" "$cfg.bak"
     echo -e "${GREEN}规则已删除${NC}"
     
     echo "正在重启服务以应用更改..."
     systemctl restart realm; sleep 1
-    systemctl is-active --quiet realm && echo -e "${GREEN}服务已重启${NC}" || { echo -e "${RED}警告：服务重启失败${NC}"; show_service_diagnostics; }
+    if systemctl is-active --quiet realm; then
+        echo -e "${GREEN}服务已重启${NC}"
+    else
+        if ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
+            echo -e "${YELLOW}提示：所有规则已清空，Realm 服务已自动退出，属正常现象。${NC}"
+        else
+            echo -e "${RED}警告：服务重启失败${NC}"
+            show_service_diagnostics
+        fi
+    fi
+    return 0
 }
 
 start_service() {
@@ -400,12 +445,17 @@ start_service() {
         if systemctl is-active --quiet realm; then
             echo "realm 服务已启动"
         else
-            echo -e "${RED}realm 服务启动失败${NC}"
-            show_service_diagnostics
+            if ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
+                echo -e "${YELLOW}提示：尚未添加任何转发规则，Realm 无法保持运行，请先添加规则。${NC}"
+            else
+                echo -e "${RED}realm 服务启动失败${NC}"
+                show_service_diagnostics
+            fi
         fi
     else
         echo "realm 服务已经在运行中"
     fi
+    return 0
 }
 
 stop_service() {
@@ -421,6 +471,7 @@ stop_service() {
     else
         echo "realm 服务未在运行"
     fi
+    return 0
 }
 
 restart_service() {
@@ -448,21 +499,32 @@ restart_service() {
             if systemctl is-active --quiet realm; then
                 echo "realm 服务已启动"
             else
-                echo -e "${RED}realm 服务启动失败${NC}"
-                show_service_diagnostics
+                if ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
+                    echo -e "${YELLOW}提示：尚未添加任何转发规则，Realm 无法保持运行，请先添加规则。${NC}"
+                else
+                    echo -e "${RED}realm 服务启动失败${NC}"
+                    show_service_diagnostics
+                fi
             fi
         else
             echo "取消启动操作"
         fi
     fi
+    return 0
 }
 
 uninstall_realm() {
     echo "准备卸载realm..."
-    read -p "确定要卸载realm吗？这将删除所有相关文件和配置: " c
-    [[ ! "$c" =~ ^[Yy]$ ]] && { echo "取消卸载"; return; }
-    read -p "再次确认：所有数据将被删除，确认卸载？(Y/N): " c2
-    [[ ! "$c2" =~ ^[Yy]$ ]] && { echo "取消卸载"; return; }
+    read -p "确定要卸载realm吗？这将删除所有相关文件和配置(y/n): " c
+    if [[ ! "$c" =~ ^[Yy]$ ]]; then
+        echo "取消卸载"
+        return 0
+    fi
+    read -p "再次确认：所有数据将被删除，确认卸载？(y/n): " c2
+    if [[ ! "$c2" =~ ^[Yy]$ ]]; then
+        echo "取消卸载"
+        return 0
+    fi
 
     [ -f /root/realm/config.toml ] && backup_config
 
@@ -474,8 +536,11 @@ uninstall_realm() {
     done
     if systemctl is-active --quiet realm; then
         echo -e "${RED}警告：服务无法完全停止${NC}"
-        read -p "是否强制继续卸载？(Y/N): " force
-        [[ ! "$force" =~ ^[Yy]$ ]] && { echo "取消卸载"; return; }
+        read -p "是否强制继续卸载？(y/n): " force
+        if [[ ! "$force" =~ ^[Yy]$ ]]; then
+            echo "取消卸载"
+            return 0
+        fi
     fi
 
     echo "禁用realm服务..."
@@ -484,12 +549,19 @@ uninstall_realm() {
     systemctl daemon-reload
 
     echo "删除realm程序和配置文件..."
-    [ -d /root/realm/backups ] && mv /root/realm/backups /root/realm_bak
+    # 修复点：正确处理备份目录的移动，避免报错
+    if [ -d "/root/realm/backups" ]; then
+        mv "/root/realm/backups" "/root/realm_backups"
+    fi
     rm -rf /root/realm
-    [ -d /root/realm_bak ] && mv /root/realm_bak /root/realm/backups
+    if [ -d "/root/realm_backups" ]; then
+        mkdir -p /root/realm
+        mv "/root/realm_backups" "/root/realm/backups"
+    fi
 
     echo -e "${GREEN}卸载完成！${NC}"
     [ -d /root/realm/backups ] && echo "配置备份保留在：/root/realm/backups"
+    return 0
 }
 
 check_realm_update() {
@@ -527,7 +599,10 @@ check_realm_update() {
             read -p "是否更新Realm？(Y/N): " confirm
             ;;
     esac
-    [[ ! "$confirm" =~ ^[Yy]$ ]] && { echo "取消Realm更新"; return 0; }
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo "取消Realm更新"
+        return 0
+    fi
 
     echo -e "\n${YELLOW}${BOLD}开始执行Realm更新流程...${NC}"
     backup_config
@@ -578,10 +653,14 @@ check_realm_update() {
     echo "启动Realm服务..."
     systemctl start realm; sleep 2
     if ! systemctl is-active --quiet realm; then
-        echo -e "${RED}服务启动失败${NC}"; show_service_diagnostics
-        [ -f /root/realm/realm.bak ] && { cp -f /root/realm/realm.bak /root/realm/realm; chmod +x /root/realm/realm; systemctl start realm; }
+        if ! grep -q "\[\[endpoints\]\]" /root/realm/config.toml; then
+            echo -e "${YELLOW}更新完成，由于无转发规则，服务处于待机状态。${NC}"
+        else
+            echo -e "${RED}服务启动失败${NC}"; show_service_diagnostics
+            [ -f /root/realm/realm.bak ] && { cp -f /root/realm/realm.bak /root/realm/realm; chmod +x /root/realm/realm; systemctl start realm; }
+        fi
     else
-        rm -f /root/realm/realm.bak
+        rm -f /root/realm/realm.bak"
     fi
     
     cd "$old"; rm -rf "$td"
@@ -650,6 +729,7 @@ update_script() {
         rm -f "$tf"
         [ -f /root/realm/realm ] && check_realm_update
     fi
+    return 0
 }
 
 verify_config() {
@@ -699,30 +779,88 @@ while true; do
     echo
     case $choice in
         1) deploy_realm ;;
-        2) [ -f /root/realm/realm ] && add_forward || echo -e "${RED}请先安装 Realm（选项1）再添加转发规则${NC}" ;;
-        3) [ -f /root/realm/realm ] && show_forwards || echo -e "${RED}请先安装 Realm（选项1）再查看转发规则${NC}" ;;
-        4) [ -f /root/realm/realm ] && delete_forward || echo -e "${RED}请先安装 Realm（选项1）再删除转发规则${NC}" ;;
-        5) [ -f /root/realm/realm ] && start_service || echo -e "${RED}请先安装 Realm（选项1）再启动服务${NC}" ;;
-        6) [ -f /root/realm/realm ] && stop_service || echo -e "${RED}请先安装 Realm（选项1）再停止服务${NC}" ;;
-        7) [ -f /root/realm/realm ] && restart_service || echo -e "${RED}请先安装 Realm（选项1）再重启服务${NC}" ;;
-        8) 
-            if [ ! -f /root/realm/realm ]; then
-                echo -e "${RED}请先安装 Realm（选项1）再查看服务状态${NC}"
+        2) 
+            if [ -f /root/realm/realm ]; then
+                add_forward
             else
+                echo -e "${RED}请先安装 Realm（选项1）再添加转发规则${NC}"
+            fi
+            ;;
+        3)
+            if [ -f /root/realm/realm ]; then
+                show_forwards
+            else
+                echo -e "${RED}请先安装 Realm（选项1）再查看转发规则${NC}"
+            fi
+            ;;
+        4)
+            if [ -f /root/realm/realm ]; then
+                delete_forward
+            else
+                echo -e "${RED}请先安装 Realm（选项1）再删除转发规则${NC}"
+            fi
+            ;;
+        5)
+            if [ -f /root/realm/realm ]; then
+                start_service
+            else
+                echo -e "${RED}请先安装 Realm（选项1）再启动服务${NC}"
+            fi
+            ;;
+        6)
+            if [ -f /root/realm/realm ]; then
+                stop_service
+            else
+                echo -e "${RED}请先安装 Realm（选项1）再停止服务${NC}"
+            fi
+            ;;
+        7)
+            if [ -f /root/realm/realm ]; then
+                restart_service
+            else
+                echo -e "${RED}请先安装 Realm（选项1）再重启服务${NC}"
+            fi
+            ;;
+        8)
+            if [ -f /root/realm/realm ]; then
                 echo -e "\n服务详细状态："
                 echo "=================="
                 echo -e "Realm 版本: ${GREEN}$(get_realm_version)${NC}"
                 echo -n "开机启动: "
-                systemctl is-enabled --quiet realm && echo -e "${GREEN}已启用${NC}" || echo -e "${RED}未启用${NC}"
+                if systemctl is-enabled --quiet realm; then
+                    echo -e "${GREEN}已启用${NC}"
+                else
+                    echo -e "${RED}未启用${NC}"
+                fi
                 echo "=================="
                 systemctl status --no-pager realm
+            else
+                echo -e "${RED}请先安装 Realm（选项1）再查看服务状态${NC}"
             fi
             ;;
-        9) [ -f /root/realm/realm ] && uninstall_realm || echo -e "${RED}Realm 未安装，无需卸载${NC}" ;;
+        9)
+            if [ -f /root/realm/realm ]; then
+                uninstall_realm
+            else
+                echo -e "${RED}Realm 未安装，无需卸载${NC}"
+            fi
+            ;;
         10) update_script ;;
-        11) [ -f /root/realm/config.toml ] && backup_config || echo -e "${RED}没有找到配置文件，无法备份${NC}" ;;
-        12) [ -d /root/realm/backups ] && backup_restore_config "restore" || echo -e "${RED}没有找到备份文件夹，无法恢复${NC}" ;;
-        13) 
+        11)
+            if [ -f /root/realm/config.toml ]; then
+                backup_config
+            else
+                echo -e "${RED}没有找到配置文件，无法备份${NC}"
+            fi
+            ;;
+        12)
+            if [ -d /root/realm/backups ]; then
+                backup_restore_config "restore"
+            else
+                echo -e "${RED}没有找到备份文件夹，无法恢复${NC}"
+            fi
+            ;;
+        13)
             while true; do
                 echo -e "\n${CYAN}${BOLD}其他选项${NC}"
                 echo -e "  ${GREEN}1${NC}. 启用realm开机启动"
@@ -758,9 +896,22 @@ while true; do
             done
             continue
             ;;
-        14) [ -f /root/realm/realm ] && show_service_diagnostics || echo -e "${RED}Realm 未安装${NC}" ;;
-        0) echo -e "${GREEN}感谢使用！${NC}"; exit 0 ;;
-        *) echo -e "${RED}无效的选项，请重新选择${NC}" ;;
+        14)
+            if [ -f /root/realm/realm ]; then
+                show_service_diagnostics
+            else
+                echo -e "${RED}Realm 未安装${NC}"
+            fi
+            ;;
+        0)
+            echo -e "${GREEN}感谢使用！${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}无效的选项，请重新选择${NC}"
+            ;;
     esac
-    [ "$choice" != "13" ] && [ "$choice" != "0" ] && read -n 1 -s -r -p "按任意键继续..."
+    if [ "$choice" != "13" ] && [ "$choice" != "0" ]; then
+        read -n 1 -s -r -p "按任意键继续..."
+    fi
 done
