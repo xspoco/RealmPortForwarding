@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="1.8.8"
+VERSION="1.8.9"
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 [ ! -f "$SCRIPT_PATH" ] && SCRIPT_PATH="$0"
@@ -118,8 +118,7 @@ EOF
 
 deploy_realm() {
     if [ -f /root/realm/realm ]; then
-        echo "检测到已安装realm，是否重新安装？"
-        read -p "输入 Y 确认重新安装，任意键取消: " c
+        read -p "检测到已安装realm，是否重新安装？(y/n): " c
         if [[ ! "$c" =~ ^[Yy]$ ]]; then
             echo "取消安装。"
             return 0
@@ -212,9 +211,15 @@ backup_config() {
     local cfg=/root/realm/config.toml dir=/root/realm/backups
     [ -f "$cfg" ] || { echo -e "${RED}错误：未找到配置文件${NC}"; return 1; }
     mkdir -p "$dir"; chmod 700 "$dir"
-    local ts=$(date +"%Y%m%d_%H%M%S") bf="$dir/config_${ts}.toml"
+    
+    # 修复点：分开赋值避免时间戳变量解析失败
+    local ts
+    ts=$(date +"%Y%m%d_%H%M%S")
+    local bf="$dir/config_${ts}.toml"
+    
     cp "$cfg" "$bf" || { echo -e "${RED}备份失败${NC}"; return 1; }
     echo -e "${GREEN}配置文件已备份到：$bf${NC}"
+    
     local n; n=$(ls -1 "$dir"/config_*.toml 2>/dev/null | wc -l)
     if [ "$n" -gt 5 ]; then
         echo "清理旧备份文件..."
@@ -305,7 +310,7 @@ add_forward() {
     echo -e "\n即将添加以下转发规则："
     echo "本地 $la:$lp -> 远程 $ra:$rp"
     [ -n "$cm" ] && echo "备注: $cm"
-    read -p "确认添加？(Y/N): " c
+    read -p "确认添加？(y/n): " c
     if [[ ! "$c" =~ ^[Yy]$ ]]; then
         echo "取消添加转发规则。"
         return 0
@@ -459,7 +464,7 @@ start_service() {
 stop_service() {
     if systemctl is-active --quiet realm; then
         echo "realm 服务正在运行中"
-        read -p "确定要停止服务吗？(Y/N): " c
+        read -p "确定要停止服务吗？(y/n): " c
         if [[ "$c" =~ ^[Yy]$ ]]; then
             systemctl stop realm
             echo "realm 服务已停止"
@@ -475,7 +480,7 @@ stop_service() {
 restart_service() {
     if systemctl is-active --quiet realm; then
         echo "realm 服务正在运行中"
-        read -p "确定要重启服务吗？(Y/N): " c
+        read -p "确定要重启服务吗？(y/n): " c
         if [[ "$c" =~ ^[Yy]$ ]]; then
             systemctl restart realm
             sleep 1
@@ -490,7 +495,7 @@ restart_service() {
         fi
     else
         echo "realm 服务未在运行，将启动服务"
-        read -p "确定要启动服务吗？(Y/N): " c
+        read -p "确定要启动服务吗？(y/n): " c
         if [[ "$c" =~ ^[Yy]$ ]]; then
             systemctl start realm
             sleep 1
@@ -513,12 +518,12 @@ restart_service() {
 
 uninstall_realm() {
     echo "准备卸载realm..."
-    read -p "确定要卸载realm吗？这将删除所有相关文件和配置: " c
+    read -p "确定要卸载realm吗？这将删除所有相关文件和配置 (y/n): " c
     if [[ ! "$c" =~ ^[Yy]$ ]]; then
         echo "取消卸载"
         return 0
     fi
-    read -p "再次确认：所有数据将被删除，确认卸载？(Y/N): " c2
+    read -p "再次确认：所有数据将被删除，确认卸载？ (y/n): " c2
     if [[ ! "$c2" =~ ^[Yy]$ ]]; then
         echo "取消卸载"
         return 0
@@ -534,7 +539,7 @@ uninstall_realm() {
     done
     if systemctl is-active --quiet realm; then
         echo -e "${RED}警告：服务无法完全停止${NC}"
-        read -p "是否强制继续卸载？(Y/N): " force
+        read -p "是否强制继续卸载？ (y/n): " force
         if [[ ! "$force" =~ ^[Yy]$ ]]; then
             echo "取消卸载"
             return 0
@@ -547,13 +552,15 @@ uninstall_realm() {
     systemctl daemon-reload
 
     echo "删除realm程序和配置文件..."
+    # 修复点：彻底解决目录冲突无法移动的问题
+    rm -rf /root/realm_backups_tmp 2>/dev/null
     if [ -d "/root/realm/backups" ]; then
-        mv "/root/realm/backups" "/root/realm_backups"
+        mv "/root/realm/backups" "/root/realm_backups_tmp"
     fi
     rm -rf /root/realm
-    if [ -d "/root/realm_backups" ]; then
-        mkdir -p /root/realm
-        mv "/root/realm_backups" "/root/realm/backups"
+    mkdir -p /root/realm
+    if [ -d "/root/realm_backups_tmp" ]; then
+        mv "/root/realm_backups_tmp" "/root/realm/backups"
     fi
 
     echo -e "${GREEN}卸载完成！${NC}"
@@ -589,11 +596,11 @@ check_realm_update() {
             ;;
         1)
             echo -e "${YELLOW}当前Realm版本高于GitHub最新发布版本，可能是测试版本${NC}"
-            read -p "是否仍要更新到GitHub发布版本？(Y/N): " confirm
+            read -p "是否仍要更新到GitHub发布版本？(y/n): " confirm
             ;;
         2)
             echo -e "${GREEN}发现Realm新版本：$latest${NC}"
-            read -p "是否更新Realm？(Y/N): " confirm
+            read -p "是否更新Realm？(y/n): " confirm
             ;;
     esac
     if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
@@ -694,12 +701,12 @@ update_script() {
             ;;
         1)
             echo "当前脚本版本比远程版本更新，可能是测试版本"
-            read -p "是否仍要更新到远程版本？(Y/N): " c
+            read -p "是否仍要更新到远程版本？(y/n): " c
             [[ "$c" =~ ^[Yy]$ ]] && update="true"
             ;;
         2)
             echo "发现脚本新版本"
-            read -p "是否更新脚本？(Y/N): " c
+            read -p "是否更新脚本？(y/n): " c
             [[ "$c" =~ ^[Yy]$ ]] && update="true"
             ;;
     esac
